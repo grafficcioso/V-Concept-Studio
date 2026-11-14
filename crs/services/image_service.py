@@ -69,8 +69,24 @@ class GenerationError(Exception):
         self.detail = detail
 
 
+def has_transparency(im: Image.Image) -> bool:
+    if im.mode in ("RGBA", "LA", "PA"):
+        return im.getchannel("A").getextrema()[0] < 255
+    return im.mode == "P" and "transparency" in im.info
+
+
+def flatten_on_white(im: Image.Image) -> Image.Image:
+    """투명·반투명 부분을 흰 배경과 합친 RGB 이미지."""
+    rgba = im.convert("RGBA")
+    return Image.alpha_composite(Image.new("RGBA", rgba.size, (255, 255, 255, 255)), rgba).convert("RGB")
+
+
 def prepare_input_image(path: Path) -> tuple[str, bytes, str]:
-    """입력 이미지를 검증하고 필요하면 PNG로 변환한다. 원본 파일은 건드리지 않는다."""
+    """입력 이미지를 검증하고 필요하면 PNG로 변환한다. 원본 파일은 건드리지 않는다.
+
+    투명 부분이 있는 이미지는 흰 배경과 합쳐서 보낸다. 투명 픽셀에 숨어 있는 색(보통 검정)을
+    모델이 '검은 배경'으로 읽어, 결과에 검은 배경·회색 얼룩·빛 번짐이 생기는 것을 막기 위함이다.
+    """
     path = Path(path)
     try:
         with Image.open(path) as im:
@@ -78,11 +94,13 @@ def prepare_input_image(path: Path) -> tuple[str, bytes, str]:
         with Image.open(path) as im:
             fmt = (im.format or "").upper()
             orientation = im.getexif().get(0x0112, 1)
-        if fmt in PASSTHROUGH_FORMATS and orientation in (1, None) and path.stat().st_size < MAX_INPUT_BYTES:
+            transparent = has_transparency(im)
+        if (fmt in PASSTHROUGH_FORMATS and orientation in (1, None) and not transparent
+                and path.stat().st_size < MAX_INPUT_BYTES):
             return path.name, path.read_bytes(), PASSTHROUGH_FORMATS[fmt]
         with Image.open(path) as im:
             im = ImageOps.exif_transpose(im)
-            im = im.convert("RGBA" if im.mode in ("RGBA", "LA", "P", "PA") else "RGB")
+            im = flatten_on_white(im) if has_transparency(im) else im.convert("RGB")
             buf = io.BytesIO()
             im.save(buf, "PNG")
     except GenerationError:

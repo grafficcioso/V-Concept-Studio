@@ -241,3 +241,27 @@ def test_build_retouch_prompt(ws):
     p = build_retouch_prompt(t, "선 정리", False, False)
     assert "whole image" in p and "SECOND image" not in p
     assert "Requested change: X" in build_retouch_prompt("custom template", "X", False, False)
+
+
+def test_transparent_input_flattened_on_white(tmp_path):
+    """투명 픽셀에 검정이 숨어 있는 PNG → 흰 배경으로 합쳐서 전송, 원본 파일은 그대로."""
+    import io as _io
+    from crs.services.image_service import prepare_input_image
+    src = tmp_path / "sheet.png"
+    im = Image.new("RGBA", (40, 40), (0, 0, 0, 0))          # 투명 + 숨은 검정
+    for x in range(10, 20):
+        for y in range(10, 20):
+            im.putpixel((x, y), (255, 100, 150, 255))        # 불투명 파트
+    im.putpixel((25, 25), (255, 100, 150, 128))              # 반투명 가장자리
+    im.save(src)
+    before = src.read_bytes()
+    name, data, mime = prepare_input_image(src)
+    out = Image.open(_io.BytesIO(data))
+    assert mime == "image/png" and out.mode == "RGB" and out.size == (40, 40)
+    assert out.getpixel((0, 0)) == (255, 255, 255) and out.getpixel((15, 15)) == (255, 100, 150)
+    r, g, b = out.getpixel((25, 25))
+    assert r == 255 and 170 < g < 185                        # 검정이 아니라 흰색과 섞임
+    assert src.read_bytes() == before
+    opaque = tmp_path / "opaque.png"
+    Image.new("RGBA", (10, 10), (5, 6, 7, 255)).save(opaque)
+    assert prepare_input_image(opaque)[1] == opaque.read_bytes()   # 완전 불투명은 그대로 전달
