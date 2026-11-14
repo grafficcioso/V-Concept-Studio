@@ -97,7 +97,7 @@ class UpdateManager(QObject):
         self.worker = None
         self._cancel = False
 
-    def check_on_startup(self, delay_ms=1500):
+    def check_on_startup(self, delay_ms=4000):
         if self.ws.settings.get("check_updates"):
             QTimer.singleShot(delay_ms, lambda: self.check(silent=True))
 
@@ -138,11 +138,17 @@ class UpdateManager(QObject):
         elif not info.zip_url:
             reason = "릴리스에 설치 파일이 없습니다"
         dlg = UpdateDialog(info, can_install=not reason, reason=reason, parent=self.window)
-        dlg.exec()
-        if dlg.choice == UpdateDialog.SKIP:
-            self.ws.settings.set("skipped_version", info.version)
-        elif dlg.choice == UpdateDialog.UPDATE:
-            self.install(info)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
+        def on_finished(_result):
+            if dlg.choice == UpdateDialog.SKIP:
+                self.ws.settings.set("skipped_version", info.version)
+            elif dlg.choice == UpdateDialog.UPDATE:
+                QTimer.singleShot(0, lambda: self.install(info))
+
+        dlg.finished.connect(on_finished)
+        self._dialog = dlg
+        dlg.open()
 
     def install(self, info: updater.ReleaseInfo):
         if self.is_busy():
@@ -186,15 +192,23 @@ class UpdateManager(QObject):
 
 
 def show_post_update(ws, window, argv) -> None:
-    """버전이 바뀐 뒤 처음 실행되면 바뀐 점을 보여 준다."""
+    """버전이 바뀐 뒤 처음 실행되면 바뀐 점을 보여 준다.
+
+    기록을 먼저 저장하고, 창은 프로그램을 붙잡지 않는(모달 루프 없는) 일반 창으로 띄운다.
+    """
     last = ws.settings.get("last_run_version") or ""
+    if last != APP_VERSION:
+        ws.settings.set("last_run_version", APP_VERSION)
     if "--update-failed" in argv:
-        QMessageBox.warning(window, "업데이트 실패", "새 버전 파일을 복사하지 못해 이전 버전으로 실행했습니다.\n"
-                            "잠시 뒤 다시 시도하거나 릴리스 페이지에서 직접 받아 주세요.")
+        box = QMessageBox(QMessageBox.Icon.Warning, "업데이트 실패",
+                          "새 버전 파일을 복사하지 못해 이전 버전으로 실행했습니다.\n"
+                          "잠시 뒤 다시 시도하거나 릴리스 페이지에서 직접 받아 주세요.", parent=window)
+        box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        box.open()
     if last and updater.parse_version(last) < updater.parse_version(APP_VERSION):
         dlg = ChangelogDialog(window, APP_VERSION, f"v{APP_VERSION} 업데이트 완료",
                               f"v{last} → v{APP_VERSION} 업데이트가 끝났습니다. 바뀐 점:")
-        dlg.exec()
-    if last != APP_VERSION:
-        ws.settings.set("last_run_version", APP_VERSION)
-
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg.setModal(False)
+        window._post_update_dialog = dlg
+        dlg.show()

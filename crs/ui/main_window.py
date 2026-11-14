@@ -47,6 +47,8 @@ class MainWindow(QMainWindow):
         self.updates = UpdateManager(ws, self, is_busy=lambda: self.ctl.is_busy() or self.gen.style_ctl.is_busy())
         self.updates.quitRequested.connect(self._quit_for_update)
         self._quitting_for_update = False
+        from ..watchdog import GuiWatchdog
+        self.watchdog = GuiWatchdog(ws.paths.logs, parent=self)
 
     def start_background_tasks(self, argv=None):
         """창이 뜬 뒤: 업데이트 완료 안내 → 새 버전 확인."""
@@ -105,6 +107,7 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(self.gen)
 
     def closeEvent(self, e):
+        self.watchdog.stop()
         if self._quitting_for_update:
             self.ws.close()
             e.accept()

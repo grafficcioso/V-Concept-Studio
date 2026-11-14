@@ -129,6 +129,22 @@ class Settings:
                 pass
         if not self.data["data_root"]:
             self.data["data_root"] = str(default_data_root())
+        self._retry_legacy_rename()
+
+    def _retry_legacy_rename(self):
+        """옛 기본 폴더(문서\\CharacterReferenceStudio)를 쓰고 있으면 새 이름으로 다시 옮겨 본다. 실패하면 그대로 쓴다."""
+        try:
+            root = Path(self.data["data_root"])
+            if root.resolve() != legacy_default_data_root().resolve() or not root.exists():
+                return
+            new_root = default_data_root()
+            if new_root.exists():
+                return
+            root.rename(new_root)
+        except OSError:
+            return
+        self.data["data_root"] = str(new_root)
+        self.save()
 
     def get(self, key):
         return self.data.get(key, DEFAULTS.get(key))

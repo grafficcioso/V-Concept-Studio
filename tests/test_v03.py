@@ -35,6 +35,19 @@ def test_legacy_settings_and_data_migration(tmp_path, monkeypatch):
     assert s2.migrated_from is None and Path(s2.get("data_root")) == new_root
 
 
+def test_retry_rename_on_later_launch(tmp_path, monkeypatch):
+    from crs import config
+    home = tmp_path / "home"
+    old_root = home / "Documents" / "CharacterReferenceStudio"
+    (old_root / "data").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: home))
+    monkeypatch.setenv("CRS_CONFIG_DIR", str(tmp_path / "cfg"))
+    (tmp_path / "cfg").mkdir()
+    (tmp_path / "cfg" / "settings.json").write_text(json.dumps({"data_root": str(old_root)}))
+    s = config.Settings()
+    assert Path(s.get("data_root")) == home / "Documents" / "V-Concept Studio" and not old_root.exists()
+
+
 def test_legacy_keyring_migration(monkeypatch):
     from crs import keystore
 

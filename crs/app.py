@@ -20,7 +20,7 @@ def _debug_dump():
 
 
 def main() -> int:
-    _dump_fh = _debug_dump()  # noqa: F841
+    dump_fh = _debug_dump()
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -62,6 +62,10 @@ def main() -> int:
         from PySide6.QtCore import QTimer
         QTimer.singleShot(int(smoke), win.close)
     rc = app.exec()
+    if dump_fh is not None:
+        import faulthandler
+        faulthandler.cancel_dump_traceback_later()
+        dump_fh.close()
     # 창이 닫힐 때 DB·설정은 이미 저장/정리되었다. Windows 에서 Qt 정리 단계의 종료 시 충돌
     # ('프로그램이 중지되었습니다' 창)을 막기 위해 곧바로 프로세스를 끝낸다.
     if sys.platform == "win32":

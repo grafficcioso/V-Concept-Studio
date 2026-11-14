@@ -473,10 +473,11 @@ def test_credit_display(qapp, win, ws):
 def test_post_update_changelog_shown(qapp, win, ws, monkeypatch):
     from crs.ui import update_ui
     shown = []
-    monkeypatch.setattr(update_ui.ChangelogDialog, "exec", lambda self: shown.append(self.windowTitle()) or 0)
+    monkeypatch.setattr(update_ui.ChangelogDialog, "show", lambda self: shown.append(self.windowTitle()))
     ws.settings.set("last_run_version", "0.2.0")
     update_ui.show_post_update(ws, win, [])
     assert shown and "업데이트 완료" in shown[0] and ws.settings.get("last_run_version") == update_ui.APP_VERSION
+    assert not win._post_update_dialog.isModal()
     update_ui.show_post_update(ws, win, [])
     assert len(shown) == 1  # 한 번만
 
@@ -487,11 +488,25 @@ def test_update_offer_from_source_run(qapp, win, ws, monkeypatch):
     info = updater.ReleaseInfo("9.0.0", "v9.0.0", "notes", "https://example/releases", zip_url="https://dl/zip")
     seen = {}
 
-    def fake_exec(self):
+    def fake_open(self):
         seen["dlg"] = self
         self.choice = update_ui.UpdateDialog.SKIP
-        return 1
+        self.finished.emit(1)
 
-    monkeypatch.setattr(update_ui.UpdateDialog, "exec", fake_exec)
+    monkeypatch.setattr(update_ui.UpdateDialog, "open", fake_open)
     win.updates.offer(info)
-    assert ws.settings.get("skipped_version") == "9.0.0"
+    assert ws.settings.get("skipped_version") == "9.0.0" and seen["dlg"]
+
+
+def test_watchdog_records_gui_stall(qapp, tmp_path):
+    from crs.watchdog import GuiWatchdog
+    wd = GuiWatchdog(tmp_path, stall_sec=1.0)
+    qapp.processEvents()
+    time.sleep(4.5)            # 메인 스레드를 막아 멈춤을 흉내낸다
+    end = time.time() + 2
+    while time.time() < end:
+        qapp.processEvents()
+        time.sleep(0.05)
+    wd.stop()
+    text = (tmp_path / "hang.log").read_text(encoding="utf-8")
+    assert "응답하지 않음" in text and "test_watchdog_records_gui_stall" in text and "응답 회복" in text

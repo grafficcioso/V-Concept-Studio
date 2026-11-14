@@ -30,7 +30,7 @@ $env:CRS_DEBUG_DUMP_FILE = Join-Path $env:RUNNER_TEMP "dump_$scenario.txt"
 $p = Start-Process -FilePath "dist\VConceptStudio\VConceptStudio.exe" -PassThru
 Start-Sleep -Seconds 10
 Show $p.Id "after start"
-foreach ($h in [W]::Of($p.Id)) { if ([W]::T($h) -like "*v0.3.0*") { Write-Host "  -> WM_CLOSE to dialog"; [W]::PostMessage($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null } }
+foreach ($h in [W]::Of($p.Id)) { if ([W]::T($h) -like "*업데이트 완료*") { Write-Host "  -> WM_CLOSE to dialog"; [W]::PostMessage($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null } }
 Start-Sleep -Seconds 6
 Show $p.Id "6s after close"
 Start-Sleep -Seconds 16
