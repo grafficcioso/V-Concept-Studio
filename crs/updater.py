@@ -198,11 +198,17 @@ if ($ok) {{
 
 
 def launch_update_script(script: Path):
+    """교체 스크립트를 숨은 창으로 실행한다.
+
+    DETACHED_PROCESS(콘솔 없음)로 띄우면 PowerShell 이 시작되지 않으므로, 숨은 콘솔(CREATE_NO_WINDOW)을 쓴다.
+    앱이 곧 종료되어도 스크립트는 계속 실행된다.
+    """
     flags = 0
     if sys.platform == "win32":
-        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                      "-File", str(script)], creationflags=flags, close_fds=True)
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                      "-File", str(script)], creationflags=flags, close_fds=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def prepare_update(info: ReleaseInfo, progress=None, cancelled=None) -> Path:
