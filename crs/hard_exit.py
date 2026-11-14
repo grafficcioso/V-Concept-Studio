@@ -24,6 +24,11 @@ def hard_exit(code: int = 0):
             ctypes.windll.ole32.OleFlushClipboard()
         except Exception:
             pass
-        k32 = ctypes.windll.kernel32
-        k32.TerminateProcess(k32.GetCurrentProcess(), int(code))
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.GetCurrentProcess.argtypes = []
+        k32.TerminateProcess.restype = wintypes.BOOL
+        k32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        k32.TerminateProcess(k32.GetCurrentProcess(), int(code) & 0xFFFFFFFF)
     os._exit(int(code))
