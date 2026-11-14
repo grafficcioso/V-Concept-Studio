@@ -5,16 +5,17 @@ on:
 jobs:
   diag:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: python -m pip install -r requirements.txt
-      - name: Startup with post-update dialog (windows platform)
-        run: python tools/diag_startup.py 0.2.0
-      - name: Startup with post-update dialog (offscreen)
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: python tools/diag_startup.py 0.2.0
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m PyInstaller crs.spec --noconfirm --clean
+      - name: EXE, update check on
+        shell: pwsh
+        run: ./tools/diag_exe.ps1 check
+      - name: EXE, update check off
+        shell: pwsh
+        run: ./tools/diag_exe.ps1 nocheck

@@ -7,7 +7,20 @@ import sys
 import traceback
 
 
+def _debug_dump():
+    """진단용: CRS_DEBUG_DUMP=초 가 있으면 그 시간 뒤 모든 스레드 위치를 파일에 기록 (EXE 는 콘솔이 없어서)."""
+    sec = os.environ.get("CRS_DEBUG_DUMP")
+    path = os.environ.get("CRS_DEBUG_DUMP_FILE")
+    if sec and path:
+        import faulthandler
+        fh = open(path, "w", encoding="utf-8")  # noqa: SIM115 - 프로세스 끝까지 열어 둔다
+        faulthandler.dump_traceback_later(int(sec), repeat=True, file=fh)
+        return fh
+    return None
+
+
 def main() -> int:
+    _dump_fh = _debug_dump()  # noqa: F841
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication, QMessageBox
 
