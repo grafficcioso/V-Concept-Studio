@@ -7,6 +7,8 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 faulthandler.dump_traceback_later(60, exit=True)   # 멈추면 모든 스레드의 위치를 출력하고 종료
 root = Path(tempfile.gettempdir()) / "vcs_diag"
 shutil.rmtree(root, ignore_errors=True)
