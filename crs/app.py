@@ -43,7 +43,14 @@ def main() -> int:
     win = MainWindow(ws)
     win.show()
     win.start_background_tasks(sys.argv)
-    return app.exec()
+    rc = app.exec()
+    # 창이 닫힐 때 DB·설정은 이미 저장/정리되었다. 빌드된 EXE 에서는 파이썬이 Qt 객체를 정리하다
+    # 종료 시 충돌("응답 없음"/오류 보고 창)이 나는 일을 막기 위해 곧바로 프로세스를 끝낸다.
+    if getattr(sys, "frozen", False):
+        import os
+        logging.shutdown()
+        os._exit(rc)
+    return rc
 
 
 if __name__ == "__main__":

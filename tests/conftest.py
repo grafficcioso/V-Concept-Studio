@@ -81,3 +81,21 @@ def responses_ok(prompt_en="clean thin line art, soft cel shading", summary="- �
                       "output_tokens_details": {"reasoning_tokens": 600}, "total_tokens": 2400},
             "parallel_tool_calls": True, "tool_choice": "auto", "tools": []}
     return httpx2.Response(200, json=body, headers={"x-request-id": "req_style_1"})
+
+
+# Windows 에서는 세션이 끝난 뒤 파이썬이 Qt 객체를 정리하는 순서 때문에 종료 코드가 1로 바뀌는 경우가 있다.
+# 모든 결과가 출력된 뒤(unconfigure) 실제 테스트 결과 코드로 즉시 종료한다.
+_EXIT_STATUS = {"code": 0}
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _EXIT_STATUS["code"] = int(exitstatus)
+
+
+def pytest_unconfigure(config):
+    if sys.platform == "win32":
+        import logging
+        logging.shutdown()
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(_EXIT_STATUS["code"])
