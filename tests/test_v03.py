@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from conftest import FAKE_KEY, make_mock_client, ok_response, responses_ok
+from conftest import FAKE_KEY, make_mock_client, responses_ok
 
 
 # ---------------------------------------------------------------- 이름 변경 이전

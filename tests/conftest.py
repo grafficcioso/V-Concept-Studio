@@ -94,8 +94,5 @@ def pytest_sessionfinish(session, exitstatus):
 
 def pytest_unconfigure(config):
     if sys.platform == "win32":
-        import logging
-        logging.shutdown()
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(_EXIT_STATUS["code"])
+        from crs.hard_exit import hard_exit
+        hard_exit(_EXIT_STATUS["code"])

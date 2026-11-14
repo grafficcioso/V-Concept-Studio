@@ -46,11 +46,14 @@ jobs:
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:CRS_CONFIG_DIR = "$env:RUNNER_TEMP\vcs_cfg"
+          $env:CRS_SMOKE_QUIT_MS = "12000"
           $p = Start-Process -FilePath "dist\VConceptStudio\VConceptStudio.exe" -PassThru
-          Start-Sleep -Seconds 15
-          if ($p.HasExited) { Write-Error "EXE exited early with code $($p.ExitCode)"; exit 1 }
-          Stop-Process -Id $p.Id -Force
-          Write-Host "EXE is running OK"
+          Start-Sleep -Seconds 6
+          if ($p.HasExited) { Write-Error "EXE exited too early with code $($p.ExitCode)"; exit 1 }
+          if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; Write-Error "EXE did not close"; exit 1 }
+          if ($p.ExitCode -ne 0) { Write-Error "EXE exit code $($p.ExitCode) (crash on exit?)"; exit 1 }
+          Get-Content "$env:USERPROFILE\Documents\V-Concept Studio\logs\app.log" -ErrorAction SilentlyContinue
+          Write-Host "EXE started and closed cleanly"
       - name: Package zip + sha256
         run: python tools/package_release.py
       - name: Release notes

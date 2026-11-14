@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import traceback
 
@@ -43,13 +44,16 @@ def main() -> int:
     win = MainWindow(ws)
     win.show()
     win.start_background_tasks(sys.argv)
+    smoke = os.environ.get("CRS_SMOKE_QUIT_MS")  # 빌드 확인용: 지정한 시간 뒤 창을 닫아 정상 종료 코드를 확인
+    if smoke:
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(int(smoke), win.close)
     rc = app.exec()
-    # 창이 닫힐 때 DB·설정은 이미 저장/정리되었다. 빌드된 EXE 에서는 파이썬이 Qt 객체를 정리하다
-    # 종료 시 충돌("응답 없음"/오류 보고 창)이 나는 일을 막기 위해 곧바로 프로세스를 끝낸다.
-    if getattr(sys, "frozen", False):
-        import os
-        logging.shutdown()
-        os._exit(rc)
+    # 창이 닫힐 때 DB·설정은 이미 저장/정리되었다. Windows 에서 Qt 정리 단계의 종료 시 충돌
+    # ('프로그램이 중지되었습니다' 창)을 막기 위해 곧바로 프로세스를 끝낸다.
+    if sys.platform == "win32":
+        from .hard_exit import hard_exit
+        hard_exit(rc)
     return rc
 
 
