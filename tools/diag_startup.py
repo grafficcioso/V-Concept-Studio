@@ -41,7 +41,7 @@ def tick():
 orig = QApplication.exec
 
 
-def patched():
+def patched(*_a):
     t = QTimer()
     t.timeout.connect(tick)
     t.start(1000)
