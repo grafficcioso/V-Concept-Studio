@@ -123,8 +123,9 @@ def test_version_and_changelog():
     from crs import APP_VERSION, updater
     assert updater.is_newer("v0.10.0", "0.9.9") and not updater.is_newer("v0.3.0", "0.3.0")
     assert updater.parse_version("V-Concept Studio v1.2") == (1, 2, 0)
-    section = updater.changelog_section(APP_VERSION)
+    section = updater.changelog_section("0.3.0")
     assert "파트 사면도" in section and "## " not in section
+    assert updater.changelog_section(APP_VERSION), "CHANGELOG.md 에 현재 버전 항목이 있어야 합니다"
     assert updater.changelog_section("9.9.9") == ""
 
 
