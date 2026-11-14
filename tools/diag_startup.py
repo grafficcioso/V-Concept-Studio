@@ -52,8 +52,26 @@ def patched():
 
 
 QApplication.exec = patched
+
+from PySide6.QtWidgets import QMessageBox  # noqa: E402
+import traceback  # noqa: E402
+
+_orig_critical = QMessageBox.critical
+
+
+def loud_critical(*a, **k):
+    print("CRITICAL BOX:", [str(x) for x in a[1:3]], flush=True)
+    traceback.print_stack()
+    return QMessageBox.StandardButton.Ok
+
+
+QMessageBox.critical = staticmethod(loud_critical)
 os.environ.pop("CRS_SMOKE_QUIT_MS", None)
-rc = appmod.main()
+try:
+    rc = appmod.main()
+except BaseException:
+    traceback.print_exc()
+    rc = -1
 print("main returned", rc, flush=True)
 log = root / "data" / "logs" / "app.log"
 print(log.read_text(encoding="utf-8") if log.exists() else "no log", flush=True)
