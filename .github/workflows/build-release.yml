@@ -54,6 +54,11 @@ jobs:
           if ($p.ExitCode -ne 0) { Write-Error "EXE exit code $($p.ExitCode) (crash on exit?)"; exit 1 }
           Get-Content "$env:USERPROFILE\Documents\V-Concept Studio\logs\app.log" -ErrorAction SilentlyContinue
           Write-Host "EXE started and closed cleanly"
+      - name: Post-update dialog closes without hanging (real Windows window)
+        shell: pwsh
+        run: ./tools/diag_exe.ps1 check
+      - name: Auto-update script end-to-end (Korean path, replace files, relaunch)
+        run: python tools/diag_update_script.py
       - name: Package zip + sha256
         run: python tools/package_release.py
       - name: Release notes

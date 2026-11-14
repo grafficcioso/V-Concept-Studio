@@ -25,7 +25,7 @@ New-Item -ItemType Directory -Force $cfg | Out-Null
 $settings = @{ data_root = $data; last_run_version = "0.2.0"; check_updates = ($scenario -ne "nocheck") } | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $cfg "settings.json"), $settings)
 $env:CRS_CONFIG_DIR = $cfg
-$env:CRS_DEBUG_DUMP = "20"
+$env:CRS_DEBUG_DUMP = "40"
 $env:CRS_DEBUG_DUMP_FILE = Join-Path $env:RUNNER_TEMP "dump_$scenario.txt"
 $p = Start-Process -FilePath "dist\VConceptStudio\VConceptStudio.exe" -PassThru
 Start-Sleep -Seconds 10
@@ -36,6 +36,12 @@ Show $p.Id "6s after close"
 Start-Sleep -Seconds 16
 Show $p.Id "22s after close"
 Write-Host "--- settings.json now:"; Get-Content (Join-Path $cfg "settings.json")
+$wins = [W]::Of($p.Id)
+$titles = $wins | ForEach-Object { [W]::T($_) }
+$hung = @($wins | Where-Object { [W]::IsHungAppWindow($_) }).Count
+$saved = (Get-Content (Join-Path $cfg "settings.json") -Raw) -match '"last_run_version":\s*"0\.2\.0"'
+$fail = ($titles -like "*업데이트 완료*") -or ($hung -gt 0) -or $saved -or (@($titles -like "V-Concept Studio v*").Count -eq 0)
 Write-Host "--- thread dump:"; Get-Content $env:CRS_DEBUG_DUMP_FILE -ErrorAction SilentlyContinue | Select-Object -First 80
 Write-Host "--- app.log:"; Get-Content (Join-Path $data "logs\app.log") -ErrorAction SilentlyContinue
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+if ($fail) { Write-Error "post-update dialog test FAILED"; exit 1 } else { Write-Host "post-update dialog test PASS" }
