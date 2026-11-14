@@ -1,0 +1,53 @@
+# Windows EXE 빌드 + GitHub 릴리스 생성
+# - 버전 태그(v0.3.0 등)를 올리면: 테스트 → 빌드 → EXE 기동 확인 → zip/sha256 → 릴리스 게시
+#   (설치된 프로그램은 실행할 때 이 릴리스를 보고 업데이트를 안내합니다)
+# - Actions 탭에서 수동 실행하면: 빌드 결과를 아티팩트로만 올립니다 (릴리스 없음)
+name: Build & Release
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Check tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python tools/check_version.py ${{ github.ref_name }}
+      - name: Tests (offscreen, mocked network, no API cost)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests -q
+      - name: Build EXE
+        run: python -m PyInstaller crs.spec --noconfirm --clean
+      - name: Smoke test the EXE
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:CRS_CONFIG_DIR = "$env:RUNNER_TEMP\vcs_cfg"
+          $p = Start-Process -FilePath "dist\VConceptStudio\VConceptStudio.exe" -PassThru
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { Write-Error "EXE exited early with code $($p.ExitCode)"; exit 1 }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "EXE is running OK"
+      - name: Package zip + sha256
+        run: python tools/package_release.py
+      - name: Release notes
+        run: python tools/release_notes.py ${{ github.ref_name }} > release_notes.md
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create ${{ github.ref_name }} VConceptStudio-windows.zip VConceptStudio-windows.zip.sha256 --title "V-Concept Studio ${{ github.ref_name }}" --notes-file release_notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VConceptStudio-windows
+          path: dist/VConceptStudio

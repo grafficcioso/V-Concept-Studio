@@ -1,0 +1,5 @@
+Create a four-view orthographic character head and hairstyle reference sheet based on the input character. Show exactly FOUR views arranged clearly: FRONT, LEFT SIDE, RIGHT SIDE, BACK. Keep the SAME character, same hair length, silhouette, volume, asymmetric hairstyle, colors, accessories, and artistic style across all four views. Consistent head scale, aligned proportions, no perspective exaggeration, no tilted or three-quarter heads.
+
+Preserve distinctive hair tips and major clump shapes, and show believable continuity of hair masses across views. The left and right side views must be distinct when the hairstyle is asymmetrical. Reconstruct unseen portions consistently without adding new design elements. Ensure all hair tips fit within each panel, with generous spacing and plain white background. Head/hair focused; no body or shoulders.
+
+Do not change character identity, face proportions, jaw shape, hair length, palette, or shading style. Keep layout clean and useful for 3D modeling.

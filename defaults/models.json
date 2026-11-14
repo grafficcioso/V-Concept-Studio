@@ -1,0 +1,240 @@
+{
+  "_comment": "모델/옵션/요금 테이블. 앱의 [설정 > 모델·요금표]에서 편집할 수 있습니다. 가격은 USD / 1M 토큰. 자동 업데이트되지 않으므로 공식 가격표와 대조해 주세요.",
+  "verified_date": "2026-11-11",
+  "sources": [
+    "https://developers.openai.com/api/docs/guides/image-generation",
+    "https://developers.openai.com/api/reference/python/resources/images/methods/edit",
+    "https://developers.openai.com/api/docs/models/gpt-image-2.6-sunburst",
+    "https://developers.openai.com/api/docs/models/gpt-6-luna"
+  ],
+  "models": [
+    {
+      "id": "gpt-image-2.6-sunburst",
+      "label": "GPT-Image-2.6 Sunburst (정밀 편집)",
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "sizes": [
+        "auto",
+        "1024x1024",
+        "1024x1536",
+        "1536x1024"
+      ],
+      "custom_size": true,
+      "backgrounds": [
+        "auto",
+        "opaque",
+        "transparent"
+      ],
+      "input_fidelity": false,
+      "pricing": {
+        "text_input": 5.0,
+        "image_input": 8.0,
+        "image_output": 30.0
+      },
+      "reference_per_image_usd": {},
+      "note": "품질/크기별 공식 출력 토큰 표가 공개되어 있지 않습니다. 공식 문서 계산기 예시: 823 출력 토큰 ≈ $0.025/장(조건 미상). 실제 사용 기록이 쌓이면 그 기록으로 추정합니다.",
+      "markup": true
+    },
+    {
+      "id": "gpt-image-2.6-flare",
+      "label": "GPT-Image-2.6 Flare (빠른 생성)",
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "sizes": [
+        "auto",
+        "1024x1024",
+        "1024x1536",
+        "1536x1024"
+      ],
+      "custom_size": true,
+      "backgrounds": [
+        "auto",
+        "opaque",
+        "transparent"
+      ],
+      "input_fidelity": false,
+      "pricing": {
+        "text_input": 5.0,
+        "image_input": 8.0,
+        "image_output": 30.0
+      },
+      "reference_per_image_usd": {},
+      "note": "품질/크기별 공식 출력 토큰 표가 공개되어 있지 않습니다.",
+      "markup": true
+    },
+    {
+      "id": "gpt-image-2.5-sunburst",
+      "label": "GPT-Image-2.5 Sunburst",
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "sizes": [
+        "auto",
+        "1024x1024",
+        "1024x1536",
+        "1536x1024"
+      ],
+      "custom_size": true,
+      "backgrounds": [
+        "auto",
+        "opaque",
+        "transparent"
+      ],
+      "input_fidelity": false,
+      "pricing": {
+        "text_input": 5.0,
+        "image_input": 8.0,
+        "image_output": 30.0
+      },
+      "reference_per_image_usd": {},
+      "note": "",
+      "markup": true
+    },
+    {
+      "id": "gpt-image-2.5-flare",
+      "label": "GPT-Image-2.5 Flare",
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "sizes": [
+        "auto",
+        "1024x1024",
+        "1024x1536",
+        "1536x1024"
+      ],
+      "custom_size": true,
+      "backgrounds": [
+        "auto",
+        "opaque",
+        "transparent"
+      ],
+      "input_fidelity": false,
+      "pricing": {
+        "text_input": 5.0,
+        "image_input": 8.0,
+        "image_output": 30.0
+      },
+      "reference_per_image_usd": {},
+      "note": "",
+      "markup": true
+    },
+    {
+      "id": "gpt-image-2",
+      "label": "GPT-Image-2",
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "sizes": [
+        "auto",
+        "1024x1024",
+        "1024x1536",
+        "1536x1024",
+        "2048x2048"
+      ],
+      "custom_size": true,
+      "backgrounds": [
+        "auto",
+        "opaque",
+        "transparent"
+      ],
+      "input_fidelity": false,
+      "pricing": {
+        "text_input": 5.0,
+        "image_input": 8.0,
+        "image_output": 30.0
+      },
+      "reference_per_image_usd": {
+        "low|1024x1024": 0.006,
+        "low|1024x1536": 0.005,
+        "low|1536x1024": 0.005,
+        "medium|1024x1024": 0.053,
+        "medium|1024x1536": 0.041,
+        "medium|1536x1024": 0.041,
+        "high|1024x1024": 0.211,
+        "high|1024x1536": 0.165,
+        "high|1536x1024": 0.165
+      },
+      "note": "투명 배경은 미리보기(preview) 기능입니다. 참고 단가는 공식 문서의 장당 출력 비용 표(출력 이미지만)입니다.",
+      "markup": false
+    },
+    {
+      "id": "gpt-image-1.5",
+      "label": "GPT-Image-1.5 (지원 종료 예정)",
+      "deprecated": true,
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "sizes": [
+        "auto",
+        "1024x1024",
+        "1024x1536",
+        "1536x1024"
+      ],
+      "custom_size": false,
+      "backgrounds": [
+        "auto",
+        "opaque",
+        "transparent"
+      ],
+      "input_fidelity": true,
+      "pricing": {
+        "text_input": 5.0,
+        "image_input": 8.0,
+        "image_output": 32.0
+      },
+      "reference_per_image_usd": {
+        "low|1024x1024": 0.009,
+        "low|1024x1536": 0.013,
+        "low|1536x1024": 0.013,
+        "medium|1024x1024": 0.034,
+        "medium|1024x1536": 0.05,
+        "medium|1536x1024": 0.05,
+        "high|1024x1024": 0.133,
+        "high|1024x1536": 0.2,
+        "high|1536x1024": 0.2
+      },
+      "note": "구형 모델. 종료 일정은 공식 deprecations 페이지에서 확인하세요.",
+      "markup": false
+    }
+  ],
+  "text_models": [
+    {
+      "id": "gpt-6-luna",
+      "label": "GPT-6 Luna (저렴, 이미지 입력 가능)",
+      "pricing": {
+        "input": 0.1,
+        "output": 0.5
+      },
+      "reasoning_effort": "low",
+      "note": "화풍 프롬프트 추출용. 이미지 입력 토큰도 입력 단가로 계산합니다. 추론(reasoning) 토큰은 출력 토큰에 포함됩니다."
+    }
+  ]
+}

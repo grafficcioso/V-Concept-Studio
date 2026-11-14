@@ -1,0 +1,7 @@
+Using the provided character illustration as the reference, redraw the exact same character in a perfect straight-on front view, facing the camera directly. Keep the face level, eyes looking straight ahead, and no head tilt or 3/4 rotation. Preserve the original character's identity and impression as closely as possible: eye shapes, eye spacing, facial width, chin height, jawline, proportions, color palette, saturation, line weight, linework, shading, expression, and art style. Do not beautify, genericize, simplify, or redesign the character.
+
+Preserve the original hairstyle's silhouette, length, volume, asymmetry, hair tips, bangs, accessories, and major clumps. Do not make the hair excessively scattered, thin, or split into many unnecessary strands. Make the relationships and overlaps between major hair masses readable for 3D modeling. Reconstruct any hair that is hidden or cropped naturally, consistent with the original design. Entire hair and all tips must fit inside the image with generous margins.
+
+Head only, no body or shoulders; omit the neck unless its presence is necessary to preserve the head framing. Plain white background. Maintain the same overall artistic feeling as the source. If the source is asymmetrical, preserve intentional hairstyle asymmetry while keeping the face facing forward.
+
+Avoid: 3/4 view, tilted head, cropped hair, changed jawline, elongated chin, narrowed face, extra hair strands, dramatic relighting, new accessories, changed expression, style transfer.
