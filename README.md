@@ -22,8 +22,9 @@ Pinterest 등에서 찾은 캐릭터 원화를 넣고 **정면화 · 파트 분�
 - 설정 → 업데이트에서 자동 확인을 끄거나, 지금 확인하거나, 변경 내역을 볼 수 있습니다.
 
 ### 새 버전 배포(개발자용)
-`crs/__init__.py` 의 `APP_VERSION`과 `defaults/CHANGELOG.md` 를 고친 뒤 `v0.4.0` 같은 **버전 태그를 푸시**하면,
-GitHub Actions(`.github/workflows/build-release.yml`)가 테스트 → EXE 빌드 → 기동 확인 → zip·sha256 → 릴리스 게시까지 자동으로 합니다.
+`crs/__init__.py` 의 `APP_VERSION`을 올리고 `defaults/CHANGELOG.md` 에 그 버전 내용을 적어 **main 에 푸시**하면,
+GitHub Actions(`.github/workflows/build-release.yml`)가 테스트 → EXE 빌드 → 기동 확인 → zip·sha256 → 릴리스(태그 포함) 게시까지 자동으로 합니다.
+버전을 올리지 않은 푸시는 빌드·테스트만 하고 릴리스는 만들지 않습니다.
 
 ### 직접 빌드 (선택)
 Python 3.12/3.13 설치 후 `build_windows.bat` 실행 → `dist\VConceptStudio\VConceptStudio.exe`.
