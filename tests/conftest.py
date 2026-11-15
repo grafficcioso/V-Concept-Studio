@@ -19,6 +19,19 @@ def png_bytes(size=(64, 64), color=(200, 30, 30, 255)) -> bytes:
     return buf.getvalue()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_keystore(monkeypatch):
+    """테스트는 실제 Windows 자격 증명 관리자를 절대 건드리지 않는다 (사용자 PC의 진짜 키 보호 + 테스트 간 키가 남지 않게).
+    보안 저장소가 필요한 테스트는 각자 가짜 저장소로 바꿔 쓴다."""
+    from crs import keystore
+    monkeypatch.setattr(keystore, "_secure_backend", lambda: None)
+    keystore._session_key = None
+    keystore._session_extra.clear()
+    yield
+    keystore._session_key = None
+    keystore._session_extra.clear()
+
+
 @pytest.fixture
 def ws(tmp_path, monkeypatch):
     monkeypatch.setenv("CRS_CONFIG_DIR", str(tmp_path / "cfg"))
