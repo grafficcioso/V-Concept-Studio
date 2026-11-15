@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog, 
 from .. import keystore
 from ..functions import BY_KEY, FUNCTIONS, label_of
 from ..workspace import SUPPORTED_EXT
-from ..functions import PART_TYPES, STYLE_SUFFIX
+from ..functions import PART_TYPES, compose_prompt
 from .dialogs import (AssetDialog, CropDialog, MetaDialog, add_thumb_item, copy_image_to_clipboard, make_thumb_list,
                       qimage_to_pil)
 from .style_ui import StyleController
@@ -627,6 +627,7 @@ class GenerateTab(QWidget):
             self.estimate_label.setText("데모 모드 — 비용 없음 (가짜 결과)")
             return
         prompt, _ = self.ws.resolve_prompt(self.function_key, self.preset_combo.currentData())
+        prompt = self.apply_style(prompt)
         est = self.ws.catalog.estimate(o["model"], o["quality"], o["size"], prompt, 1 if self.input_id else 0, self.ws.db)
         self._estimate_detail = est.text()
         self.estimate_label.setText(est.headline() + ("" if est.computable else " (사용 기록 없음)")
@@ -829,7 +830,7 @@ class GenerateTab(QWidget):
 
     def apply_style(self, prompt: str) -> str:
         st = self.ws.db.get_style(self.style_combo.currentData())
-        return prompt + STYLE_SUFFIX.replace("{style}", st["prompt"]) if st else prompt
+        return compose_prompt(prompt, st["prompt"] if st else None)
 
     def extract_style_result(self):
         if self.result_id:

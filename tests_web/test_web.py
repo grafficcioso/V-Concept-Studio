@@ -230,7 +230,9 @@ def test_key_test_and_settings_persist(page, tmp_path):
     pg.fill("#creditSince", "2026-01-01")
     pg.click("#moneySave")
     pg.select_option("#promptFn", "front_view")
+    assert "head tilt" in pg.input_value("#promptNeg") and "### Negative" not in pg.input_value("#promptText")
     pg.fill("#promptText", "MY FRONT PROMPT")
+    pg.fill("#promptNeg", "blur, text")
     pg.click("#promptSave")
     pg.screenshot(path=str(SHOTS / "settings.png"), full_page=True)
     pg.reload()
@@ -240,7 +242,8 @@ def test_key_test_and_settings_persist(page, tmp_path):
     confirm(pg)
     pg.wait_for_selector("#resultCard:not([hidden])")
     fields = {n: v.decode() for n, f, v in parse_multipart(pg.api.requests[-1]) if not f}
-    assert fields["prompt"] == "MY FRONT PROMPT"
+    assert fields["prompt"].replace("\r\n", "\n") == ("MY FRONT PROMPT\n\nAvoid (negative prompt). The result must NOT contain or show "
+                                "any of the following: blur, text")
     pg.click(".tabbar [data-go=settings]")
     pg.wait_for_function("document.querySelector('#usageSummary').textContent.includes('추정 잔액')")
     assert "추정 잔액 $4.9" in pg.text_content("#usageSummary")

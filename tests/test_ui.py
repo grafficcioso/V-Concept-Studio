@@ -238,9 +238,12 @@ def test_settings_dialog_and_no_key_leak(qapp, win, ws, sample_png, monkeypatch)
     wait_idle(qapp, win)
     dlg = SettingsDialog(ws, win, "prompts:parts_separation")
     assert dlg.fn_combo.currentData() == "parts_separation"
+    assert "invented accessories" in dlg.neg_edit.toPlainText()     # 기본 Negative 가 아래 칸에 나뉘어 보인다
+    assert "### Negative" not in dlg.prompt_edit.toPlainText()
     dlg.prompt_edit.setPlainText("NEW PARTS PROMPT")
+    dlg.neg_edit.setPlainText("labels, text")
     dlg._save_prompt()
-    assert ws.default_prompt("parts_separation") == "NEW PARTS PROMPT"
+    assert ws.default_prompt("parts_separation") == "NEW PARTS PROMPT\n\n### Negative\nlabels, text"
     monkeypatch.setattr("crs.ui.settings_dialog.QInputDialog.getText", staticmethod(lambda *a, **k: ("복제본", True)))
     dlg._duplicate_prompt()
     assert [p["name"] for p in ws.db.list_presets("parts_separation")] == ["복제본"]
@@ -548,3 +551,25 @@ def test_image_view_fit_is_cheap_and_not_reentrant(qapp, tmp_path):
     scale = v.transform().m11()
     assert 0.5 < scale * 500 / v.viewport().height() < 1.01   # 세로가 화면에 맞음
     v.close()
+
+
+def test_generate_sends_negative_last(qapp, win, ws, sample_png):
+    """Positive → 화풍 → Negative('피할 것') 순서로 API 에 보낸다."""
+    import re as _re
+    seen = []
+
+    def handler(request):
+        seen.append(request.content)
+        return ok_response()
+    use_mock_api(ws, handler)
+    setup_project(win, ws, sample_png)
+    ws.save_default_prompt("front_view", "POSITIVE PART\n\n### Negative\nblurry eyes, extra ears")
+    sid = ws.db.add_style("내 화풍", "SOFT CEL SHADING", "", None)
+    win.gen.reload_styles(sid)
+    win.gen.generate()
+    wait_idle(qapp, win)
+    body = seen[-1].decode("utf-8", "replace")
+    m = _re.search(r'name="prompt"\r\n\r\n(.*?)\r\n--', body, _re.S)
+    prompt = m.group(1)
+    assert prompt.startswith("POSITIVE PART") and "### Negative" not in prompt
+    assert prompt.index("SOFT CEL SHADING") < prompt.index("must NOT") and prompt.endswith("blurry eyes, extra ears")

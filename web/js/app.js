@@ -3,9 +3,10 @@ import { db } from "./db.js";
 import { ApiError, editImage, listImageModels } from "./api.js";
 import { Catalog } from "./pricing.js";
 import { PaintLayer, decode, prepareForApi, saveOrShare, sizeOf, thumbnail } from "./images.js";
+import { composePrompt, joinPrompt, splitPrompt } from "./prompt.js";
 import { clearToken, hasValidToken, requestToken, summary as syncSummary, syncOnce } from "./sync.js";
 
-export const WEB_VERSION = "0.2.0";
+export const WEB_VERSION = "0.2.1";
 
 const FUNCTIONS = [
   { key: "front_view", label: "정면화", desc: "원화를 정면 머리 일러스트로 다시 그립니다." },
@@ -274,7 +275,7 @@ function setBusy(on, label = "") {
 
 async function generate() {
   if (!state.inputId) { await modal("입력 이미지", "먼저 사진을 골라 주세요."); return; }
-  await runJob({ fn: state.fn, prompt: promptFor(state.fn), inputIds: [state.inputId], sourceId: state.inputId });
+  await runJob({ fn: state.fn, prompt: composePrompt(promptFor(state.fn)), inputIds: [state.inputId], sourceId: state.inputId });
 }
 
 async function showResult(id) {
@@ -371,16 +372,19 @@ async function sendRetouch() {
   const m = state.catalog.get(opts().model);
   if (marks && !m.markup) { await modal("영역 지정 미지원", `현재 모델(${m.label || m.id})은 빨간 펜 영역 지정을 지원하지 않습니다. 생성 화면의 옵션에서 GPT-Image-2.5/2.6 계열로 바꾸거나, 칠한 것을 지우고 전체 수정으로 보내세요.`); return; }
   const orig = $("rtUseOrig").checked ? await rootOriginal(id) : null;
-  let prompt = promptFor("retouch") || "{area_instruction} {reference_instruction}\n\nRequested change: {request}";
+  let [prompt, negative] = splitPrompt(promptFor("retouch") || "{area_instruction} {reference_instruction}\n\nRequested change: {request}");
   if (!prompt.includes("{request}")) prompt += "\n\nRequested change: {request}";
-  prompt = prompt.replaceAll("{area_instruction}", marks ? AREA_MARKUP : AREA_WHOLE)
+  prompt = joinPrompt(prompt, negative).replaceAll("{area_instruction}", marks ? AREA_MARKUP : AREA_WHOLE)
     .replaceAll("{reference_instruction}", orig ? REF_ORIGINAL : "").replaceAll("{request}", request).replace(/[ \t]+/g, " ").trim();
+  prompt = composePrompt(prompt);
   keepRetouchState();
   $("retouch").hidden = true; go("create");
   await runJob({ fn: "retouch", prompt, inputIds: orig ? [id, orig.id] : [id], markup: marks ? await paint.markupBlob() : null,
     sourceId: id, extra: { request } });
   if (state.resultId && (await db.getImage(state.resultId))?.sourceId === id) rtStates.delete(id);
 }
+
+function showPrompt(k) { const [p, n] = splitPrompt(promptFor(k)); $("promptText").value = p; $("promptNeg").value = n; }
 
 // ------------------------------------------------------------------ 구글 드라이브 동기화
 const gClientId = () => localStorage.getItem("vc.gClientId") || state.config.google_web_client_id || "";
@@ -443,7 +447,7 @@ async function renderSettings() {
   $("creditInput").value = s.credit || ""; $("creditSince").value = s.creditSince || ""; $("budgetInput").value = s.budget || "";
   const pf = $("promptFn");
   if (!pf.options.length) PROMPT_KEYS.forEach((k) => { const o = document.createElement("option"); o.value = k; o.textContent = LABELS[k]; pf.appendChild(o); });
-  $("promptText").value = promptFor(pf.value);
+  showPrompt(pf.value);
   $("aboutText").textContent = `웹 v${WEB_VERSION} · 요금표 확인일 ${state.catalog.verified}\n이미지·기록은 이 기기의 이 브라우저에만 저장됩니다. 브라우저 데이터를 지우면 함께 지워집니다.`;
   $("aboutText").style.whiteSpace = "pre-wrap";
   refreshMoney();
@@ -514,15 +518,15 @@ function bindEvents() {
     saveSettings({ credit: +$("creditInput").value || 0, creditSince: $("creditSince").value || "", budget: +$("budgetInput").value || 0 });
     refreshMoney(); toast("저장했습니다.");
   };
-  $("promptFn").onchange = () => { $("promptText").value = promptFor($("promptFn").value); $("promptMsg").textContent = ""; };
+  $("promptFn").onchange = () => { showPrompt($("promptFn").value); $("promptMsg").textContent = ""; };
   $("promptSave").onclick = () => {
-    const k = $("promptFn").value, v = $("promptText").value.trim();
-    if (!v) { toast("프롬프트가 비어 있습니다."); return; }
-    if (v === state.defaults[k]) localStorage.removeItem("vc.prompt." + k); else localStorage.setItem("vc.prompt." + k, v);
+    const k = $("promptFn").value, v = joinPrompt($("promptText").value, $("promptNeg").value);
+    if (!$("promptText").value.trim()) { toast("Positive 프롬프트가 비어 있습니다."); return; }
+    if (v === joinPrompt(...splitPrompt(state.defaults[k]))) localStorage.removeItem("vc.prompt." + k); else localStorage.setItem("vc.prompt." + k, v);
     $("promptMsg").textContent = "저장했습니다. 다음 요청부터 적용됩니다.";
   };
   $("promptReset").onclick = () => {
-    const k = $("promptFn").value; localStorage.removeItem("vc.prompt." + k); $("promptText").value = promptFor(k); $("promptMsg").textContent = "기본값으로 되돌렸습니다.";
+    const k = $("promptFn").value; localStorage.removeItem("vc.prompt." + k); showPrompt(k); $("promptMsg").textContent = "기본값으로 되돌렸습니다.";
   };
   $("showChangelog").onclick = async () => {
     try { await modal("변경 내역", await (await fetch("data/WEB_CHANGELOG.md", { cache: "no-cache" })).text()); } catch { toast("불러오지 못했습니다."); }

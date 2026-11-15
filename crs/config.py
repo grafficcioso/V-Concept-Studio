@@ -1,6 +1,7 @@
 """앱 설정과 폴더 구조. 비밀 정보(API 키)는 여기에 저장하지 않는다."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -212,10 +213,20 @@ class AppPaths:
                   self.data, self.logs, self.models_file.parent):
             d.mkdir(parents=True, exist_ok=True)
         defaults = resource_dir() / "defaults"
+        shipped = _shipped_prompt_hashes(defaults)
         for src in sorted((defaults / "prompts").glob("*.md")):
             dst = self.prompts / src.name
             if not dst.exists():
                 shutil.copyfile(src, dst)
+                continue
+            # 사용자가 손대지 않은(예전 버전 기본값 그대로인) 파일만 새 기본값으로 바꾼다
+            try:
+                cur = dst.read_text(encoding="utf-8").strip()
+                new = src.read_text(encoding="utf-8").strip()
+                if cur != new and hashlib.sha256(cur.encode("utf-8")).hexdigest() in shipped:
+                    shutil.copyfile(src, dst)
+            except (OSError, UnicodeDecodeError):
+                pass
         if not self.models_file.exists():
             shutil.copyfile(defaults / "models.json", self.models_file)
 
@@ -224,6 +235,13 @@ class AppPaths:
 
     def abs(self, rel: str | None) -> Path | None:
         return (self.root / rel) if rel else None
+
+
+def _shipped_prompt_hashes(defaults: Path) -> set:
+    try:
+        return set(json.loads((defaults / "prompt_history.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return set()
 
 
 def default_prompt_text(function_key: str) -> str:

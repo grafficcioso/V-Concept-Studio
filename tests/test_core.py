@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -265,3 +266,46 @@ def test_transparent_input_flattened_on_white(tmp_path):
     opaque = tmp_path / "opaque.png"
     Image.new("RGBA", (10, 10), (5, 6, 7, 255)).save(opaque)
     assert prepare_input_image(opaque)[1] == opaque.read_bytes()   # 완전 불투명은 그대로 전달
+
+
+def test_positive_negative_prompt():
+    from crs.functions import compose_prompt, join_prompt, split_prompt
+    assert split_prompt("A\n\n### Negative\nx, y") == ("A", "x, y")
+    assert split_prompt("A\n\nAvoid: x, y") == ("A", "x, y")            # 예전 형식
+    assert split_prompt("A only") == ("A only", "")
+    assert join_prompt("A", "") == "A" and join_prompt(*split_prompt(join_prompt("A", "n"))) == "A\n\n### Negative\nn"
+    out = compose_prompt("POS\n\n### Negative\nred marks,\n  blur", style="STYLE")
+    assert out.startswith("POS") and out.index("STYLE") < out.index("must NOT") and out.endswith("red marks, blur")
+    assert "### Negative" not in out
+    assert compose_prompt("POS") == "POS"
+
+
+def test_all_default_prompts_have_negative():
+    from crs.config import default_prompt_text
+    from crs.functions import FUNCTIONS, split_prompt
+    for key in [f.key for f in FUNCTIONS] + ["retouch"]:
+        pos, neg = split_prompt(default_prompt_text(key))
+        assert pos and neg, key
+
+
+def test_unedited_prompt_files_upgrade(tmp_path, monkeypatch):
+    """예전 기본값 그대로인 프롬프트 파일은 새 기본값으로, 사용자가 고친 파일은 그대로."""
+    import subprocess
+    from crs.config import Settings
+    from crs.workspace import Workspace
+    root = Path(__file__).resolve().parent.parent
+    old = subprocess.run(["git", "show", "7897382:defaults/prompts/four_views.md"], cwd=root,
+                         capture_output=True, text=True)
+    if old.returncode != 0:
+        pytest.skip("git 기록 없음")
+    monkeypatch.setenv("CRS_CONFIG_DIR", str(tmp_path / "cfg"))
+    s = Settings()
+    s.set("data_root", str(tmp_path / "data"))
+    prompts = tmp_path / "data" / "prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "four_views.md").write_text(old.stdout, encoding="utf-8")
+    (prompts / "upscale.md").write_text("MY OWN UPSCALE", encoding="utf-8")
+    ws = Workspace(s)
+    assert "### Negative" in ws.default_prompt("four_views")
+    assert ws.default_prompt("upscale") == "MY OWN UPSCALE"
+    ws.close()

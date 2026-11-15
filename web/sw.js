@@ -1,6 +1,6 @@
 // 오프라인용 앱 껍데기 캐시. OpenAI 요청은 절대 캐시하지 않는다.
 const CACHE = "vconcept-__BUILD__";
-const SHELL = ["./", "index.html", "css/app.css", "js/app.js", "js/db.js", "js/api.js", "js/images.js", "js/pricing.js", "js/sync.js",
+const SHELL = ["./", "index.html", "css/app.css", "js/app.js", "js/db.js", "js/api.js", "js/images.js", "js/pricing.js", "js/sync.js", "js/prompt.js",
   "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", (e) => {

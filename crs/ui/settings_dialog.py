@@ -187,9 +187,14 @@ class SettingsDialog(QDialog):
         self.preset_meta.setWordWrap(True)
         form.addRow("연결 설정", self.preset_meta)
         right.addLayout(form)
+        right.addWidget(QLabel("<b>Positive</b> — 만들고 싶은 것 (영문)"))
         self.prompt_edit = QPlainTextEdit()
-        self.prompt_edit.setPlaceholderText("영문 프롬프트")
-        right.addWidget(self.prompt_edit, 1)
+        self.prompt_edit.setPlaceholderText("예: redraw the same character in a straight-on front view…")
+        right.addWidget(self.prompt_edit, 3)
+        right.addWidget(QLabel("<b>Negative</b> — 나오면 안 되는 것 (영문, 쉼표로 구분)"))
+        self.neg_edit = QPlainTextEdit()
+        self.neg_edit.setPlaceholderText("예: 3/4 view, tilted head, cropped hair, new accessories")
+        right.addWidget(self.neg_edit, 1)
         row = QHBoxLayout()
         for text, fn in (("저장", self._save_prompt), ("복제…", self._duplicate_prompt), ("삭제", self._delete_preset),
                          ("기본값으로 초기화", self._reset_prompt), ("파일에서 불러오기…", self._import_prompt),
@@ -198,7 +203,9 @@ class SettingsDialog(QDialog):
             b.clicked.connect(fn)
             row.addWidget(b)
         right.addLayout(row)
-        tip = QLabel("저장한 프롬프트는 다음 생성 요청부터 적용됩니다. '기본'은 prompts 폴더의 .md 파일이며, "
+        tip = QLabel("저장한 프롬프트는 다음 생성 요청부터 적용됩니다. Negative 는 보낼 때 프롬프트 맨 끝에 "
+                     "'다음은 나오면 안 됨' 문단으로 붙습니다(이미지 API 에 별도 negative 칸이 없기 때문). "
+                     "'기본'은 prompts 폴더의 .md 파일(### Negative 줄 아래가 Negative)이며, "
                      "모델·품질·크기까지 묶어 두려면 생성 화면의 [현재 설정을 프리셋으로…]를 사용하세요.")
         tip.setWordWrap(True)
         right.addWidget(tip)
@@ -248,12 +255,22 @@ class SettingsDialog(QDialog):
             self.preset_meta.setText(str(self.ws.prompt_file(self._fn_key())))
             text = self.ws.default_prompt(self._fn_key())
         self._loaded_prompt = text
-        self.prompt_edit.setPlainText(text)
+        self._set_prompt_text(text)
+
+    def _set_prompt_text(self, text: str):
+        from ..functions import split_prompt
+        pos, neg = split_prompt(text)
+        self.prompt_edit.setPlainText(pos)
+        self.neg_edit.setPlainText(neg)
+
+    def _prompt_text(self) -> str:
+        from ..functions import join_prompt
+        return join_prompt(self.prompt_edit.toPlainText(), self.neg_edit.toPlainText())
 
     def _save_prompt(self):
-        text = self.prompt_edit.toPlainText().strip()
-        if not text:
-            QMessageBox.warning(self, "프롬프트", "프롬프트가 비어 있습니다.")
+        text = self._prompt_text()
+        if not self.prompt_edit.toPlainText().strip():
+            QMessageBox.warning(self, "프롬프트", "Positive 프롬프트가 비어 있습니다.")
             return
         pid = self._current_preset_id()
         if pid:
@@ -270,7 +287,7 @@ class SettingsDialog(QDialog):
         if not ok or not name.strip():
             return
         src = self.ws.db.get_preset(self._current_preset_id()) or {}
-        new_id = self.ws.db.add_preset(name.strip(), self._fn_key(), self.prompt_edit.toPlainText().strip(),
+        new_id = self.ws.db.add_preset(name.strip(), self._fn_key(), self._prompt_text(),
                                        src.get("model"), src.get("quality"), src.get("size"), src.get("background"))
         self._reload_preset_list(new_id)
 
@@ -294,13 +311,13 @@ class SettingsDialog(QDialog):
         else:
             self.ws.reset_default_prompt(self._fn_key())
         self._loaded_prompt = text
-        self.prompt_edit.setPlainText(text)
+        self._set_prompt_text(text)
 
     def _import_prompt(self):
         f, _ = QFileDialog.getOpenFileName(self, "프롬프트 불러오기", "", "텍스트 (*.md *.txt);;모든 파일 (*)")
         if f:
             try:
-                self.prompt_edit.setPlainText(Path(f).read_text(encoding="utf-8").strip())
+                self._set_prompt_text(Path(f).read_text(encoding="utf-8").strip())
             except (OSError, UnicodeDecodeError) as e:
                 QMessageBox.warning(self, "불러오기", f"파일을 읽지 못했습니다: {e}")
 
@@ -308,7 +325,7 @@ class SettingsDialog(QDialog):
         f, _ = QFileDialog.getSaveFileName(self, "프롬프트 내보내기", f"{self._fn_key()}.md", "Markdown (*.md)")
         if f:
             try:
-                Path(f).write_text(self.prompt_edit.toPlainText().strip() + "\n", encoding="utf-8")
+                Path(f).write_text(self._prompt_text() + "\n", encoding="utf-8")
             except OSError as e:
                 QMessageBox.warning(self, "내보내기", f"저장하지 못했습니다: {e}")
 
@@ -632,7 +649,8 @@ class SettingsDialog(QDialog):
 
     # ----------------------------------------------------------------- save
     def _save_and_close(self):
-        if self.prompt_edit.toPlainText().strip() != self._loaded_prompt.strip():
+        from ..functions import join_prompt, split_prompt
+        if self._prompt_text() != join_prompt(*split_prompt(self._loaded_prompt)):
             ans = QMessageBox.question(self, "프롬프트", "편집 중인 프롬프트가 저장되지 않았습니다. 저장할까요?",
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No |
                                        QMessageBox.StandardButton.Cancel)

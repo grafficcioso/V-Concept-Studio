@@ -46,7 +46,8 @@ class StyleController(QObject):
         tm = ws.catalog.text_model(model)
         if not ws.demo_mode and not self._confirm(model, parent_widget):
             return False
-        instructions = ws.default_prompt("style_extract")
+        from ..functions import compose_prompt
+        instructions = compose_prompt(ws.default_prompt("style_extract"))
         service = ws.style_service
         service.reset_cancel()
         effort = tm.get("reasoning_effort")

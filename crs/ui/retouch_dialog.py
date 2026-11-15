@@ -279,10 +279,11 @@ PART_REFERENCE = ("The SECOND image is the original full character illustration,
 
 
 def build_retouch_prompt(template: str, request: str, has_markup: bool, has_reference: bool) -> str:
-    from ..functions import fill_placeholders
-    text = template or "{area_instruction} {reference_instruction}\n\nRequested change: {request}"
-    if "{request}" not in text:
-        text += "\n\nRequested change: {request}"
+    from ..functions import fill_placeholders, join_prompt, split_prompt
+    pos, neg = split_prompt(template or "{area_instruction} {reference_instruction}\n\nRequested change: {request}")
+    if "{request}" not in pos:
+        pos += "\n\nRequested change: {request}"
+    text = join_prompt(pos, neg)
     return fill_placeholders(text, area_instruction=AREA_WITH_MARKUP if has_markup else AREA_WHOLE,
                              reference_instruction=REFERENCE_ORIGINAL if has_reference else "",
                              request=request.strip())

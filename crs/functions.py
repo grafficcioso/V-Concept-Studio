@@ -7,6 +7,7 @@ UI(생성 버튼, 프롬프트 편집기, 프리셋)는 이 목록을 그대로 
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -66,6 +67,41 @@ PART_TYPES = [  # (표시 이름, 기능 키)
 ]
 
 STYLE_SUFFIX = "\n\nArt style to follow (from a style analysis of the reference): {style}"
+
+# ---- Positive / Negative 프롬프트 ---------------------------------------------
+# 저장 형식은 한 덩어리 텍스트: 앞부분 = Positive, "### Negative" 줄 아래 = Negative.
+# (OpenAI 이미지 API 에는 별도 negative 입력이 없어서, 보낼 때 맨 끝에 '피할 것' 문단으로 붙인다.)
+NEG_HEADER = "### Negative"
+NEG_SUFFIX = "\n\nAvoid (negative prompt). The result must NOT contain or show any of the following: {negative}"
+_NEG_RE = re.compile(r"^[ \t]*#{1,6}[ \t]*negative\b[^\n]*$", re.I | re.M)
+
+
+def split_prompt(text: str) -> tuple[str, str]:
+    """(positive, negative). 예전 형식(마지막 문단이 'Avoid:' 로 시작)도 negative 로 읽는다."""
+    text = (text or "").strip()
+    m = _NEG_RE.search(text)
+    if m:
+        return text[:m.start()].strip(), text[m.end():].strip()
+    paras = text.split("\n\n")
+    if len(paras) > 1 and paras[-1].lstrip().lower().startswith("avoid:"):
+        return "\n\n".join(paras[:-1]).strip(), paras[-1].split(":", 1)[1].strip()
+    return text, ""
+
+
+def join_prompt(positive: str, negative: str) -> str:
+    positive, negative = (positive or "").strip(), (negative or "").strip()
+    return f"{positive}\n\n{NEG_HEADER}\n{negative}" if negative else positive
+
+
+def compose_prompt(text: str, style: str | None = None) -> str:
+    """API 로 보낼 최종 프롬프트: Positive + (화풍) + Negative('피할 것' 문단)."""
+    pos, neg = split_prompt(text)
+    out = pos
+    if style:
+        out += STYLE_SUFFIX.replace("{style}", style)
+    if neg:
+        out += NEG_SUFFIX.replace("{negative}", " ".join(neg.split()))
+    return out
 
 
 def fill_placeholders(template: str, **values) -> str:
