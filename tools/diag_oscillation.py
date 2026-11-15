@@ -9,6 +9,12 @@ from PySide6.QtGui import QColor, QPixmap  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 app = QApplication([])
+style = os.environ.get("DIAG_STYLE")
+if style:
+    from PySide6.QtWidgets import QStyleFactory
+    print("available styles:", QStyleFactory.keys(), flush=True)
+    app.setStyle(style)
+print("style in use:", app.style().name(), flush=True)
 from crs.ui.image_view import ImageView  # noqa: E402
 
 counts = {"n": 0}
@@ -31,12 +37,12 @@ for iw, ih in [(1024, 1024), (1536, 1024), (1024, 1536), (1672, 941), (2048, 115
     v.set_image("osc.png")
     v.show()
     app.processEvents()
-    for w in range(300, 1000, 13):
-        for h in range(300, 900, 17):
+    for w in range(300, 1000, 23):
+        for h in range(300, 900, 29):
             counts["n"] = 0
             v.resize(w, h)
             t0 = time.time()
-            while time.time() - t0 < 0.05:
+            while time.time() - t0 < 0.15:
                 app.processEvents()
             if counts["n"] > 3:
                 found.append((iw, ih, w, h, counts["n"]))
