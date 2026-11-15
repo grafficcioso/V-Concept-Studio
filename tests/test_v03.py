@@ -197,3 +197,48 @@ def test_no_release_yet(monkeypatch):
 
     monkeypatch.setattr(updater, "_open", raise_404)
     assert updater.check_latest() is None
+
+
+def test_settings_save_retries_when_file_locked(tmp_path, monkeypatch):
+    from crs import config
+    monkeypatch.setenv("CRS_CONFIG_DIR", str(tmp_path / "cfg"))
+    s = config.Settings()
+    calls = {"n": 0}
+    real_replace = Path.replace
+
+    def flaky_replace(self, target):
+        calls["n"] += 1
+        if calls["n"] <= 3:
+            raise PermissionError(32, "다른 프로세스가 파일을 사용 중")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    assert s.save() is True and calls["n"] == 4
+    s.set("timeout_sec", 123)
+    assert json.loads((tmp_path / "cfg" / "settings.json").read_text(encoding="utf-8"))["timeout_sec"] == 123
+
+    def always_fail(self, target):
+        raise PermissionError(32, "busy")
+
+    monkeypatch.setattr(Path, "replace", always_fail)
+    monkeypatch.setattr(Path, "write_text", lambda self, *a, **k: (_ for _ in ()).throw(PermissionError(32, "busy")))
+    assert s.save() is False          # 실패해도 예외 없이 계속
+
+
+def test_slow_event_report(tmp_path):
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication, QPushButton, QWidget
+    from crs.app import _make_app_class
+    QApplication.instance() or QApplication([])
+    cls = _make_app_class()
+    parent = QWidget()
+    parent.setWindowTitle("메인")
+    btn = QPushButton("x", parent)
+    btn.setObjectName("credit_btn")
+
+    class Fake:
+        slow_log = tmp_path / "hang.log"
+
+    cls._report(Fake(), btn, QEvent(QEvent.Type.Paint), 3.2)
+    text = (tmp_path / "hang.log").read_text(encoding="utf-8")
+    assert "느린 이벤트 3.2초" in text and "Paint" in text and "QPushButton(credit_btn)" in text and "메인" in text

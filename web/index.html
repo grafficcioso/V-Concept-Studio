@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#7b5cd6">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="V-Concept">
+<title>V-Concept Studio</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">V-Concept Studio <span class="ver" id="ver"></span></div>
+  <button class="status" id="apiStatus" data-go="settings"></button>
+</header>
+
+<main>
+  <!-- ============ 생성 ============ -->
+  <section id="view-create" class="view active">
+    <div class="card input-card">
+      <div class="card-title">입력 이미지</div>
+      <div class="picker" id="inputPicker">
+        <img id="inputImg" alt="" hidden>
+        <div class="picker-empty" id="inputEmpty">
+          <div class="big">＋</div>
+          <div>사진을 골라 주세요</div>
+          <div class="muted small">PNG · JPG · WEBP</div>
+        </div>
+      </div>
+      <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" hidden>
+      <div class="row">
+        <button class="btn" id="pickBtn">사진 선택</button>
+        <button class="btn" id="pasteBtn">붙여넣기</button>
+        <button class="btn" id="fromHistoryBtn">기록에서</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">기능</div>
+      <div class="chips" id="fnChips"></div>
+      <div class="muted small" id="fnDesc"></div>
+    </div>
+
+    <details class="card" id="optsCard">
+      <summary class="card-title">옵션 <span class="muted small" id="optsSummary"></span></summary>
+      <label class="field">모델<select id="modelSel"></select></label>
+      <label class="field">품질<select id="qualitySel"></select></label>
+      <label class="field">크기<select id="sizeSel"></select></label>
+      <label class="field">배경<select id="bgSel"></select></label>
+      <div class="muted small" id="modelNote"></div>
+    </details>
+
+    <div class="card">
+      <div class="estimate" id="estimate"></div>
+      <button class="btn primary big-btn" id="genBtn">생성</button>
+      <div class="progress" id="progress" hidden>
+        <div class="bar"><div></div></div>
+        <div class="row space"><span id="progressText"></span><button class="btn small" id="cancelBtn">취소</button></div>
+      </div>
+      <div class="muted small">AI 결과는 원본과 100% 같지 않을 수 있습니다. 생성 중에는 화면을 켜 두세요. 실패해도 자동으로 다시 보내지 않습니다.</div>
+    </div>
+
+    <div class="card" id="resultCard" hidden>
+      <div class="card-title">결과 <span class="muted small" id="resultMeta"></span></div>
+      <img id="resultImg" class="result-img" alt="">
+      <div class="grid-btns">
+        <button class="btn" data-act="save">저장 · 공유</button>
+        <button class="btn" data-act="fav">★ 즐겨찾기</button>
+        <button class="btn" data-act="use">입력으로 사용</button>
+        <button class="btn" data-act="retouch">✎ 부분 수정</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 기록 ============ -->
+  <section id="view-history" class="view">
+    <div class="row space">
+      <div class="seg" id="histFilter">
+        <button data-f="output" class="on">결과</button>
+        <button data-f="original">원본</button>
+        <button data-f="fav">★</button>
+      </div>
+      <input type="search" id="histSearch" placeholder="이름·태그 검색">
+    </div>
+    <div class="thumbs" id="histGrid"></div>
+    <div class="muted small center" id="histEmpty" hidden>아직 기록이 없습니다.</div>
+  </section>
+
+  <!-- ============ 설정 ============ -->
+  <section id="view-settings" class="view">
+    <div class="card">
+      <div class="card-title">OpenAI API 키</div>
+      <div class="muted small">platform.openai.com → API keys 에서 만든 키를 넣어 주세요. 이 기기의 이 브라우저에만 저장되며 다른 곳으로 보내지 않습니다(OpenAI 요청에만 사용). 공용 기기에서는 쓰지 마세요.</div>
+      <input type="password" id="keyInput" placeholder="sk-..." autocomplete="off">
+      <div class="row">
+        <button class="btn primary" id="keySave">저장</button>
+        <button class="btn" id="keyTest">연결 테스트 (무료)</button>
+        <button class="btn danger" id="keyDel">삭제</button>
+      </div>
+      <div class="small" id="keyMsg"></div>
+      <label class="check"><input type="checkbox" id="demoMode"> 데모 모드 (API 호출 없이 흐름만 확인, 비용 없음)</label>
+    </div>
+
+    <div class="card">
+      <div class="card-title">비용 · 충전액</div>
+      <div id="usageSummary" class="small"></div>
+      <label class="field">충전한 금액 ($)<input type="number" id="creditInput" min="0" step="0.01" placeholder="0 = 미설정"></label>
+      <label class="field">충전 기준일<input type="date" id="creditSince"></label>
+      <label class="field">월 소프트 예산 ($)<input type="number" id="budgetInput" min="0" step="0.5" placeholder="0 = 사용 안 함"></label>
+      <label class="check"><input type="checkbox" id="confirmReq"> 생성 전에 항상 예상 비용 확인</label>
+      <div class="row">
+        <button class="btn primary" id="moneySave">저장</button>
+        <a class="btn" href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noopener">OpenAI 결제 페이지</a>
+      </div>
+      <div class="muted small">모든 금액은 이 앱의 추정치입니다. 실제 청구액과 잔액은 OpenAI 결제 페이지에서 확인하세요. 예산은 경고만 하며 청구를 막지 않습니다.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">프롬프트</div>
+      <label class="field">기능<select id="promptFn"></select></label>
+      <textarea id="promptText" rows="10"></textarea>
+      <div class="row">
+        <button class="btn primary" id="promptSave">저장</button>
+        <button class="btn" id="promptReset">기본값으로</button>
+      </div>
+      <div class="small" id="promptMsg"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">정보</div>
+      <div class="small" id="aboutText"></div>
+      <div class="row">
+        <button class="btn" id="showChangelog">변경 내역</button>
+        <button class="btn danger" id="wipeAll">이 기기 데이터 모두 지우기</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav class="tabbar">
+  <button data-go="create" class="on"><span>✦</span>생성</button>
+  <button data-go="history"><span>▦</span>기록</button>
+  <button data-go="settings"><span>⚙</span>설정</button>
+</nav>
+
+<!-- ============ 상세 보기 ============ -->
+<div class="sheet" id="detail" hidden>
+  <div class="sheet-head"><button class="btn" data-close>닫기</button><span id="detailTitle"></span></div>
+  <div class="sheet-body">
+    <img id="detailImg" class="result-img" alt="">
+    <div class="small muted" id="detailMeta"></div>
+    <label class="field">이름<input id="detailName"></label>
+    <label class="field">태그<input id="detailTags" placeholder="쉼표로 구분"></label>
+    <div class="grid-btns">
+      <button class="btn" data-dact="save">저장 · 공유</button>
+      <button class="btn" data-dact="fav">★ 즐겨찾기</button>
+      <button class="btn" data-dact="use">입력으로 사용</button>
+      <button class="btn" data-dact="retouch">✎ 부분 수정</button>
+      <button class="btn primary" data-dact="meta">이름·태그 저장</button>
+      <button class="btn danger" data-dact="delete">삭제</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 부분 수정 ============ -->
+<div class="sheet" id="retouch" hidden>
+  <div class="sheet-head"><button class="btn" data-close>닫기</button><span>부분 수정 — 바꿀 곳을 칠하세요</span></div>
+  <div class="sheet-body">
+    <div class="canvas-wrap"><canvas id="rtCanvas"></canvas></div>
+    <div class="row">
+      <label class="grow small">굵기 <input type="range" id="rtSize" min="4" max="160" value="40"></label>
+      <button class="btn small" id="rtEraser">지우개</button>
+      <button class="btn small" id="rtUndo">되돌리기</button>
+      <button class="btn small" id="rtClear">모두 지우기</button>
+    </div>
+    <textarea id="rtRequest" rows="3" placeholder="예: 머리카락 가닥을 줄여줘 / 원화 느낌을 더 살려줘 (한국어 가능)"></textarea>
+    <div class="chips small-chips" id="rtQuick"></div>
+    <label class="check"><input type="checkbox" id="rtUseOrig" checked> 원본 원화를 참조로 함께 보내기</label>
+    <div class="muted small">칠한 영역은 '안내'로 쓰여 경계가 정확히 지켜지지 않을 수 있습니다. 칠하지 않으면 전체 수정입니다. 유료 생성 1회입니다.</div>
+    <button class="btn primary big-btn" id="rtSend">수정 요청 보내기</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<div class="modal" id="modal" hidden>
+  <div class="modal-box">
+    <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-text" id="modalText"></div>
+    <div class="row end" id="modalBtns"></div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

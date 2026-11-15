@@ -32,6 +32,16 @@ Python 3.12/3.13 설치 후 `build_windows.bat` 실행 → `dist\VConceptStudio\
 
 ---
 
+## 1-1. 웹앱 (폰·PC 브라우저)
+
+주소: **https://grafficcioso.github.io/V-Concept-Studio/**
+
+- 폰에서 열고 공유 메뉴의 **홈 화면에 추가**를 누르면 앱처럼 실행됩니다.
+- 정면화 · 파트 분할 · 사면도 · 홍채 복원 · 업스케일 · 부분 수정(손가락으로 빨간 펜)
+- API 키와 기록은 **그 기기의 그 브라우저에만** 저장됩니다. PC 프로그램과 자동으로 연동되지 않습니다.
+- 브라우저에서 OpenAI 를 직접 호출합니다(중간 서버 없음, 추가 비용 없음).
+- 소스: `web/` · 배포: `.github/workflows/pages.yml` (main 에 푸시하면 브라우저 테스트 후 자동 배포)
+
 ## 2. OpenAI API 키 발급 · 등록
 
 1. <https://platform.openai.com> 로그인 → **API keys**에서 키 생성 (`sk-…`). 결제 수단/크레딧 등록이 필요합니다.
