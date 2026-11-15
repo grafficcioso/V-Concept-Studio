@@ -26,8 +26,10 @@ jobs:
           $cdb = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Debuggers" -Recurse -Filter cdb.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
           Write-Host "cdb: $($cdb.FullName)"
           if (-not $cdb) { Write-Host "no cdb"; exit 0 }
-          & $cdb.FullName -z "${{ steps.dump.outputs.path }}" -y "srv*C:\sym*https://msdl.microsoft.com/download/symbols" -c ".reload;~*k 12;q" 2>&1 | Select-Object -Last 70
-      - uses: actions/upload-artifact@v4
-        with:
-          name: testdump
-          path: ${{ steps.dump.outputs.path }}
+          & $cdb.FullName -z "${{ steps.dump.outputs.path }}" -y "srv*C:\sym*https://msdl.microsoft.com/download/symbols" -c ".reload;~0k 12;q" 2>&1 | Select-Object -Last 20
+      - name: Dump as base64 (for offline parser test)
+        shell: pwsh
+        run: |
+          Write-Host "B64BEGIN"
+          [Convert]::ToBase64String([IO.File]::ReadAllBytes("${{ steps.dump.outputs.path }}")) -split '(.{4000})' | Where-Object { $_ } | ForEach-Object { Write-Host "B64:$_" }
+          Write-Host "B64END"
