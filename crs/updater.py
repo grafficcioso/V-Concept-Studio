@@ -178,6 +178,8 @@ $exe = {_ps_quote(exe)}
 $log = {_ps_quote(log_file)}
 "start $(Get-Date)" | Out-File -FilePath $log -Encoding utf8
 try {{ Wait-Process -Id {int(pid)} -Timeout 90 -ErrorAction SilentlyContinue }} catch {{}}
+# Claude Code 연결(MCP 서버)이 같은 폴더의 파일을 잡고 있으면 덮어쓸 수 없으므로 끝낸다 (Claude Code 에서 /mcp 로 다시 연결)
+try {{ Get-Process -Name "{EXE_NAME}-mcp" -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like "$dst*" }} | Stop-Process -Force -ErrorAction SilentlyContinue }} catch {{}}
 Start-Sleep -Milliseconds 800
 $ok = $false
 for ($i = 0; $i -lt 15 -and -not $ok; $i++) {{

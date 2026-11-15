@@ -5,35 +5,18 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import QCheckBox, QMessageBox
 
+from .. import jobs as jobs_core
 from .. import keystore
+from ..jobs import GenJob  # noqa: F401  (예전 import 경로 유지)
 from ..functions import label_of
 from ..services.image_service import GenerationError, GenerationRequest, GenerationResult
 
 log = logging.getLogger(__name__)
-
-
-@dataclass
-class GenJob:
-    project_id: int
-    function: str
-    prompt: str
-    preset_id: int | None
-    preset_name: str
-    input_paths: list[Path]
-    source_image_id: int | None
-    model: str
-    quality: str = "auto"
-    size: str = "auto"
-    background: str = "auto"
-    input_fidelity: str | None = None
-    markup_path: Path | None = None
-    extra_params: dict = field(default_factory=dict)
 
 
 class GenerationWorker(QThread):
@@ -109,9 +92,7 @@ class GenerationController(QObject):
         self.job = job
         self._service = ws.service
         self._service.reset_cancel()
-        req = GenerationRequest(input_images=[Path(p) for p in job.input_paths], prompt=job.prompt, model=job.model,
-                                quality=job.quality, size=job.size, background=job.background,
-                                input_fidelity=job.input_fidelity, markup=job.markup_path, timeout_sec=float(ws.settings.get("timeout_sec")))
+        req = jobs_core.make_request(ws, job)
         self.worker = GenerationWorker(self._service, req, self)
         self.worker.succeeded.connect(self._on_success)
         self.worker.failed.connect(self._on_failure)
@@ -173,52 +154,20 @@ class GenerationController(QObject):
                     size=job.size, n_inputs=len(job.input_paths))
 
     def _on_success(self, result: GenerationResult):
-        ws, job = self.ws, self.job
-        usage = result.usage
-        cost = ws.catalog.actual_cost(job.model, usage) if not result.demo else 0.0
-        params = {"input_fidelity": job.input_fidelity, "n_inputs": len(job.input_paths),
-                  "response_size": result.size, "response_quality": result.quality,
-                  "response_background": result.background, "elapsed_sec": round(result.elapsed_sec, 1),
-                  "demo": result.demo, **job.extra_params}
+        job = self.job
         try:
-            image_id = ws.save_output(
-                job.project_id, result.image_bytes, function=job.function, source_image_id=job.source_image_id,
-                prompt=job.prompt, preset_id=job.preset_id, preset_name=job.preset_name, model=job.model,
-                quality=job.quality, size=job.size, background=job.background, params=params,
-                request_id=result.request_id, usage=usage, est_cost_usd=cost)
-        except Exception as e:
-            log.exception("failed to save output")
-            ws.db.add_usage(**self._usage_fields(job), status="demo" if result.demo else "ok",
-                            usage_json=None, est_cost_usd=cost, request_id=result.request_id,
-                            message=f"결과 저장 실패: {type(e).__name__}")
+            image_id = jobs_core.record_success(self.ws, job, result)
+        except GenerationError as e:
             self.usageChanged.emit()
-            self.failed.emit(f"이미지는 생성되었지만 저장에 실패했습니다: {e}\n(요청은 과금되었을 수 있습니다.)", job)
+            self.failed.emit(e.message, job)
             return
-        details = (usage or {}).get("input_tokens_details") or {}
-        import json
-        ws.db.add_usage(**self._usage_fields(job), image_id=image_id, status="demo" if result.demo else "ok",
-                        input_text_tokens=details.get("text_tokens"), input_image_tokens=details.get("image_tokens"),
-                        output_tokens=(usage or {}).get("output_tokens"),
-                        usage_json=json.dumps(usage) if usage else None, est_cost_usd=cost,
-                        request_id=result.request_id,
-                        message="데모 모드 (API 호출 없음)" if result.demo else
-                        (None if usage else "API가 사용량을 반환하지 않아 비용을 계산하지 못했습니다."))
-        log.info("generate ok: image_id=%s request_id=%s elapsed=%.1fs", image_id, result.request_id, result.elapsed_sec)
         self.usageChanged.emit()
         self.finished.emit(image_id, job)
 
     def _on_failure(self, err: GenerationError):
         job = self.job
-        status = "unknown" if err.billing_uncertain else "failed"
-        if self.ws.demo_mode:
-            status = "failed"
-        self.ws.db.add_usage(**self._usage_fields(job), status=status, request_id=err.request_id,
-                             message=f"[{err.kind}] {err.message}"[:500])
-        log.warning("generate failed: kind=%s request_id=%s detail=%s", err.kind, err.request_id, err.detail)
+        msg = jobs_core.record_failure(self.ws, job, err)
         self.usageChanged.emit()
-        msg = err.message
-        if err.request_id:
-            msg += f"\n\n요청 ID: {err.request_id}"
         self.failed.emit(msg, job)
 
     def _cleanup(self):

@@ -54,6 +54,8 @@ jobs:
           if ($p.ExitCode -ne 0) { Write-Error "EXE exit code $($p.ExitCode) (crash on exit?)"; exit 1 }
           Get-Content "$env:USERPROFILE\Documents\V-Concept Studio\logs\app.log" -ErrorAction SilentlyContinue
           Write-Host "EXE started and closed cleanly"
+      - name: Claude Code connection (MCP server EXE, official client, demo mode)
+        run: python tools/smoke_mcp_exe.py
       - name: Post-update dialog closes without hanging (real Windows window)
         shell: pwsh
         run: ./tools/diag_exe.ps1 check

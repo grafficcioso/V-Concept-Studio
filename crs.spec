@@ -32,7 +32,31 @@ a = Analysis(
     excludes=excludes,
     noarchive=False,
 )
+# Claude Code 연결용 MCP 서버: 같은 폴더에 콘솔 실행 파일로 넣는다 (표준 입출력으로 통신해야 해서 console=True)
+m = Analysis(
+    ["mcp_main.py"],
+    pathex=[],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=excludes + ["PySide6.QtWidgets", "PySide6.QtGui"],
+    noarchive=False,
+)
 pyz = PYZ(a.pure)
+mpyz = PYZ(m.pure)
+mexe = EXE(
+    mpyz,
+    m.scripts,
+    [],
+    exclude_binaries=True,
+    name="VConceptStudio-mcp",
+    debug=False,
+    strip=False,
+    upx=False,
+    console=True,
+)
 exe = EXE(
     pyz,
     a.scripts,
@@ -44,4 +68,4 @@ exe = EXE(
     upx=False,
     console=False,  # GUI app: no console window
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="VConceptStudio")
+coll = COLLECT(exe, a.binaries, a.datas, mexe, m.binaries, m.datas, strip=False, upx=False, name="VConceptStudio")

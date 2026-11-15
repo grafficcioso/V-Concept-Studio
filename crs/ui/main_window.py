@@ -61,6 +61,28 @@ class MainWindow(QMainWindow):
         self.gen.set_sync_status("☁ 연결됨" if self.sync.connected() else "☁ 드라이브 미연결")
         from ..watchdog import GuiWatchdog
         self.watchdog = GuiWatchdog(ws.paths.logs, parent=self)
+        # Claude 연결(MCP 모드)처럼 다른 프로세스가 DB 를 바꾸면 몇 초 안에 목록을 새로 고친다
+        self._db_version = self._data_version()
+        self._ext_timer = QTimer(self)
+        self._ext_timer.timeout.connect(self._check_external_changes)
+        self._ext_timer.start(4000)
+
+    def _data_version(self):
+        try:
+            return self.ws.db.conn.execute("PRAGMA data_version").fetchone()[0]
+        except Exception:
+            return None
+
+    def _check_external_changes(self):
+        v = self._data_version()
+        if v is None or v == self._db_version:
+            return
+        if self.ctl.is_busy() or QApplication.activeModalWidget() is not None:
+            return          # 생성 중이거나 대화상자가 열려 있으면 다음 확인 때 다시
+        self._db_version = v
+        self.gen.reload_projects(self.gen.project_id)
+        self.gen.reload_lists()
+        self.library.reload()
 
     def start_background_tasks(self, argv=None):
         """창이 뜬 뒤: 업데이트 완료 안내 → 새 버전 확인."""
@@ -79,7 +101,7 @@ class MainWindow(QMainWindow):
         from ..db import now_iso
         self.gen.set_sync_status(f"☁ {now_iso()[11:16]} 동기화 · {stats.summary()}", error=bool(stats.errors),
                                  tooltip="\n".join(stats.errors[:10]) or "구글 드라이브와 동기화했습니다.")
-        if stats.downloaded or stats.meta_pulled or stats.deleted_local:
+        if stats.downloaded or stats.meta_pulled or stats.deleted_local or stats.inbox_received:
             self.gen.reload_projects(self.gen.project_id)
             self.gen.reload_lists()
             self.library.reload()

@@ -43,6 +43,18 @@
       </div>
     </div>
 
+    <details class="card" id="pcCard">
+      <summary class="card-title">PC로 원본 보내기 <span class="muted small" id="pcSummary"></span></summary>
+      <div class="muted small">여러 장을 골라 PC 프로그램으로 보냅니다(구글 드라이브 경유). PC에서는 '폰에서 받은 원본'으로 들어오고, Claude Code 연결로 "받은 원본 사면도까지 뽑아 둬"처럼 시킬 수 있습니다. 드라이브에 잠깐 올라갔다가 PC가 받으면 휴지통으로 옮겨집니다.</div>
+      <input type="file" id="pcFiles" accept="image/png,image/jpeg,image/webp" multiple hidden>
+      <button class="btn" id="pcPick">사진 고르기 (여러 장)</button>
+      <div class="small" id="pcPicked"></div>
+      <label class="field">프로젝트 이름 (비우면 '폰에서 받은 원본')<input id="pcProject" placeholder="예: 캐릭터A"></label>
+      <label class="field">메모 (PC·Claude 에게 전할 말)<textarea id="pcNote" rows="2" placeholder="예: 사면도까지 뽑아 둬"></textarea></label>
+      <button class="btn primary" id="pcSend">PC로 보내기</button>
+      <div class="small" id="pcStatus"></div>
+    </details>
+
     <div class="card">
       <div class="card-title">기능</div>
       <div class="chips" id="fnChips"></div>

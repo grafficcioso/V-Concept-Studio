@@ -365,3 +365,59 @@ def test_drive_sync_pc_web_roundtrip(browser, site, tmp_path, monkeypatch):
         pc.close()
     finally:
         drive.stop()
+
+
+def test_send_originals_to_pc(browser, site, tmp_path, monkeypatch):
+    """폰 웹앱 [PC로 보내기] → 드라이브 → PC 가 '받은 원본'으로 받고 드라이브 사본은 휴지통."""
+    sys.path.insert(0, str(ROOT / "tests"))
+    from fake_drive import FakeDrive
+    drive = FakeDrive().start()
+    try:
+        ctx = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        pg = ctx.new_page()
+        pg.route("https://accounts.google.com/**", lambda r, q: r.fulfill(status=200, body="", headers={"content-type": "text/javascript"}))
+        pg.add_init_script(GIS_MOCK + f"window.__VC_DRIVE_BASE = {json.dumps(drive.base)};")
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(site)
+        pg.wait_for_selector("#fnChips .chip")
+        files = []
+        for i, color in enumerate(("red", "blue", "green")):
+            p = tmp_path / f"phone_{i}.jpg"
+            Image.new("RGB", (60, 80), color).save(p, "JPEG")
+            files.append(str(p))
+        pg.click("#pcCard summary")
+        pg.set_input_files("#pcFiles", files)
+        _wait_text(pg, "#pcPicked", "3장 선택됨")
+        pg.fill("#pcProject", "캐릭터C")
+        pg.fill("#pcNote", "사면도까지 뽑아 둬")
+        pg.screenshot(path=str(SHOTS / "send_to_pc.png"), full_page=True)
+        pg.click("#pcSend")
+        _wait_text(pg, "#pcStatus", "지금까지 보낸 원본 3장")
+        items = drive.items()
+        assert len(items) == 3
+        metas = [json.loads(f["description"]) for f in (items.values() if isinstance(items, dict) else items)]
+        assert {m["kind"] for m in metas} == {"inbox"} and {m["note"] for m in metas} == {"사면도까지 뽑아 둬"}
+
+        pc = _pc(tmp_path, monkeypatch, "pc2")
+        st = _pc_sync(pc, drive)
+        assert st.inbox_received == 3 and len(drive.items()) == 0
+        proj = pc.db.get_project_by_name("캐릭터C")
+        rows = pc.db._all("SELECT * FROM images WHERE inbox='new' AND project_id=?", (proj["id"],))
+        assert len(rows) == 3 and {r["note"] for r in rows} == {"사면도까지 뽑아 둬"}
+        assert sorted(r["name"] for r in rows) == ["phone_0", "phone_1", "phone_2"]
+
+        # 웹은 다시 보내지 않고, 웹 기록의 원본도 지워지지 않는다
+        pg.click("#syncStatus")
+        _wait_text(pg, "#syncStatus", "연결됨")
+        pg.wait_for_timeout(1500)
+        assert len(drive.items()) == 0
+        pg.click(".tabbar [data-go=history]")
+        pg.click("#histFilter [data-f=original]")
+        _wait_text(pg, "#histGrid", "phone_2")
+        assert pg.locator("#histGrid .thumb").count() == 3
+        assert not errors, errors
+        ctx.close()
+        pc.close()
+    finally:
+        drive.stop()

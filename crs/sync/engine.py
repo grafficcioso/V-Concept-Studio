@@ -17,6 +17,7 @@ from . import META_VERSION
 
 log = logging.getLogger(__name__)
 INCOMING_PROJECT = "웹앱에서 받음"
+INBOX_PROJECT = "폰에서 받은 원본"     # 폰 웹앱에서 [PC로 보내기] 한 원본의 기본 프로젝트
 
 
 @dataclass
@@ -27,10 +28,13 @@ class SyncStats:
     meta_pulled: int = 0
     deleted_local: int = 0
     trashed_remote: int = 0
+    inbox_received: int = 0
     errors: list = field(default_factory=list)
 
     def summary(self) -> str:
         parts = [f"올림 {self.uploaded}", f"받음 {self.downloaded}"]
+        if self.inbox_received:
+            parts.append(f"폰 원본 {self.inbox_received}")
         if self.meta_pushed or self.meta_pulled:
             parts.append(f"정보 갱신 {self.meta_pushed + self.meta_pulled}")
         if self.deleted_local or self.trashed_remote:
@@ -46,7 +50,7 @@ def _parse_meta(f: dict) -> dict | None:
     except ValueError:
         return None
     uid = meta.get("uid") or (f.get("appProperties") or {}).get("vc_uid")
-    if not uid or meta.get("kind") not in ("output", "asset"):
+    if not uid or meta.get("kind") not in ("output", "asset", "inbox"):
         return None
     meta["uid"] = uid
     return meta
@@ -129,6 +133,30 @@ class SyncEngine:
 
     # ---- 동기화 ------------------------------------------------------------
     def sync(self, progress=None) -> SyncStats:
+        """프로그램 창과 MCP 모드가 동시에 동기화하지 않도록 파일 잠금 안에서 실행한다."""
+        from .lock import sync_lock
+        with sync_lock(self.ws.paths.root):
+            return self._sync(progress)
+
+    def _receive_inbox(self, f: dict, meta: dict, st: SyncStats, say):
+        """폰에서 보낸 원본 1장: PC 프로젝트에 원본으로 넣고 '받은 원본' 표시 → 드라이브 사본은 휴지통으로."""
+        uid = meta["uid"]
+        if not self.db.find_by_uid("images", uid):
+            say(f"폰 원본 받는 중: {meta.get('name') or f.get('name')}")
+            data = self.drive.download(f["id"])
+            with Image.open(io.BytesIO(data)) as im:
+                im.load()
+                pil = im.convert("RGBA") if im.mode not in ("RGB", "RGBA") else im.copy()
+            name = (meta.get("project") or "").strip() or INBOX_PROJECT
+            proj = self.db.get_project_by_name(name)
+            pid = proj["id"] if proj else self.ws.create_project(name)
+            iid = self.ws.import_original(pid, pil, name=meta.get("name") or "폰 원본")
+            self.db._update("images", iid, {"uid": uid, "inbox": "new", "note": meta.get("note") or "",
+                                            "tags": meta.get("tags") or ""})
+            st.inbox_received += 1
+        self.drive.trash(f["id"])
+
+    def _sync(self, progress=None) -> SyncStats:
         st = SyncStats()
         say = progress or (lambda text: None)
         say("드라이브 폴더 확인 중…")
@@ -141,8 +169,15 @@ class SyncEngine:
         remote = {}
         for f in self.drive.list_items(folder):
             meta = _parse_meta(f)
-            if meta:
-                remote[meta["uid"]] = (f, meta)
+            if not meta:
+                continue
+            if meta["kind"] == "inbox":
+                try:
+                    self._receive_inbox(f, meta, st, say)
+                except Exception as e:
+                    st.errors.append(f"폰 원본 받기 실패({meta.get('name') or meta['uid'][:8]}): {e}")
+                continue
+            remote[meta["uid"]] = (f, meta)
 
         # 1) 이 PC에서 지운 항목 → 드라이브 휴지통
         for t in self.db.tombstones():

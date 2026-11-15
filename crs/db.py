@@ -82,7 +82,8 @@ def ts_key(text: str | None):
 class Database:
     def __init__(self, path: Path):
         self.path = Path(path)
-        self.conn = sqlite3.connect(str(self.path))
+        # MCP 모드와 프로그램 창이 같은 DB 를 동시에 쓸 수 있으므로 잠금 대기 시간을 둔다
+        self.conn = sqlite3.connect(str(self.path), timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
@@ -93,7 +94,13 @@ class Database:
     META_FIELDS = {"images": {"name", "tags", "note", "favorite"}, "assets": {"name", "tags", "note", "category"}}
 
     def _migrate(self):
-        """기존 DB 에 동기화용 열을 추가한다 (v0.4)."""
+        """기존 DB 에 열을 추가한다 (v0.4 동기화, v0.5 받은 원본·요청 출처)."""
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(images)")}
+        if "inbox" not in have:      # 폰에서 받은 원본: 'new' → 'done'
+            self.conn.execute("ALTER TABLE images ADD COLUMN inbox TEXT")
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(usage_log)")}
+        if "source" not in have:     # 'app' | 'mcp'
+            self.conn.execute("ALTER TABLE usage_log ADD COLUMN source TEXT")
         for table in ("images", "assets"):
             have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             for col, typ in self.SYNC_COLUMNS:

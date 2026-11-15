@@ -6,7 +6,7 @@ import { PaintLayer, decode, prepareForApi, saveOrShare, sizeOf, thumbnail } fro
 import { composePrompt, joinPrompt, splitPrompt } from "./prompt.js";
 import { clearToken, hasValidToken, requestToken, summary as syncSummary, syncOnce } from "./sync.js";
 
-export const WEB_VERSION = "0.2.1";
+export const WEB_VERSION = "0.3.0";
 
 const FUNCTIONS = [
   { key: "front_view", label: "정면화", desc: "원화를 정면 머리 일러스트로 다시 그립니다." },
@@ -90,7 +90,7 @@ async function boot() {
   const last = (await db.listImages()).find((r) => r.kind === "original");
   if (last) await setInput(last.id);
   updateEstimate();
-  refreshSyncStatus();
+  refreshSyncStatus(); refreshPcStatus();
   if (hasValidToken()) doSync(false);
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 }
@@ -386,6 +386,31 @@ async function sendRetouch() {
 
 function showPrompt(k) { const [p, n] = splitPrompt(promptFor(k)); $("promptText").value = p; $("promptNeg").value = n; }
 
+// ------------------------------------------------------------------ PC로 원본 보내기
+let pcPicked = [];
+async function refreshPcStatus(text) {
+  const all = (await db.listImages()).filter((r) => r.pcInbox);
+  const pending = all.filter((r) => r.pcInbox === "pending").length, sent = all.length - pending;
+  $("pcSummary").textContent = pending ? `대기 ${pending}장` : (sent ? `보냄 ${sent}장` : "");
+  $("pcStatus").textContent = (text ? text + "\n" : "") + (pending ? `보낼 대기 ${pending}장 (구글 연결되면 보냅니다) · ` : "") + `지금까지 보낸 원본 ${sent}장`;
+  $("pcStatus").style.whiteSpace = "pre-wrap";
+}
+async function sendToPc() {
+  if (!pcPicked.length) { toast("먼저 사진을 골라 주세요."); return; }
+  const project = $("pcProject").value.trim(), note = $("pcNote").value.trim();
+  for (const f of pcPicked) {
+    if (!/^image\/(png|jpeg|webp)$/.test(f.type)) continue;
+    let size = [0, 0]; try { size = await sizeOf(f); } catch { continue; }
+    const blob = f.slice(0, f.size, f.type);
+    await db.addImage({ kind: "original", blob, thumb: await thumbnail(blob), name: (f.name || "원본").replace(/\.[^.]+$/, ""),
+      width: size[0], height: size[1], pcInbox: "pending", pcProject: project, pcNote: note });
+  }
+  const n = pcPicked.length; pcPicked = []; $("pcPicked").textContent = ""; $("pcFiles").value = "";
+  await refreshPcStatus(`${n}장을 보낼 목록에 넣었습니다.`);
+  await doSync(true);
+  await refreshPcStatus();
+}
+
 // ------------------------------------------------------------------ 구글 드라이브 동기화
 const gClientId = () => localStorage.getItem("vc.gClientId") || state.config.google_web_client_id || "";
 function refreshSyncStatus(text) {
@@ -412,7 +437,8 @@ async function doSync(interactive) {
     const st = await syncOnce((t) => { $("syncStatus").textContent = "☁ " + t.slice(0, 18); });
     const msg = "동기화 완료 · " + syncSummary(st) + (st.errors.length ? "\n" + st.errors.slice(0, 5).join("\n") : "");
     state.syncing = false; refreshSyncStatus(msg);
-    if (interactive || st.downloaded || st.deleted) toast(syncSummary(st));
+    if (interactive || st.downloaded || st.deleted || st.sentToPc) toast(syncSummary(st));
+    if (st.sentToPc) refreshPcStatus();
     if (document.getElementById("view-history").classList.contains("active")) renderHistory();
     if (state.inputId && !(await db.getImage(state.inputId))) await setInput(null);
   } catch (e) {
@@ -501,6 +527,9 @@ function bindEvents() {
     catch (e) { $("keyMsg").textContent = "✖ " + e.message; }
   };
   $("syncStatus").onclick = () => doSync(true);
+  $("pcPick").onclick = () => $("pcFiles").click();
+  $("pcFiles").onchange = () => { pcPicked = [...$("pcFiles").files]; $("pcPicked").textContent = pcPicked.length ? `${pcPicked.length}장 선택됨` : ""; };
+  $("pcSend").onclick = () => sendToPc();
   $("gConnect").onclick = () => {
     const v = $("gClientId").value.trim();
     if (v) localStorage.setItem("vc.gClientId", v); else localStorage.removeItem("vc.gClientId");

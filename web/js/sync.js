@@ -74,9 +74,10 @@ async function listItems(folder) {
 
 async function upload(folder, name, blob, meta) {
   const boundary = "vc" + Math.random().toString(16).slice(2);
-  const metadata = { name, parents: [folder], description: JSON.stringify(meta), appProperties: { vc_item: "1", vc_uid: meta.uid }, mimeType: "image/png" };
+  const mime = /^image\/(png|jpeg|webp)$/.test(blob.type) ? blob.type : "image/png";
+  const metadata = { name, parents: [folder], description: JSON.stringify(meta), appProperties: { vc_item: "1", vc_uid: meta.uid }, mimeType: mime };
   const body = new Blob([
-    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: image/png\r\n\r\n`,
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mime}\r\n\r\n`,
     blob, `\r\n--${boundary}--\r\n`]);
   return api("POST", "/files?uploadType=multipart&fields=id,modifiedTime", { body, upload: true, headers: { "Content-Type": `multipart/related; boundary=${boundary}` } });
 }
@@ -98,7 +99,7 @@ function metaOf(r) {
 
 /** 동기화 1회. say(text) 로 진행 상황을 알린다. 반환: 통계 */
 export async function syncOnce(say = () => {}) {
-  const st = { uploaded: 0, downloaded: 0, meta: 0, deleted: 0, errors: [] };
+  const st = { uploaded: 0, downloaded: 0, meta: 0, deleted: 0, sentToPc: 0, errors: [] };
   say("드라이브 폴더 확인 중…");
   const folder = await findOrCreateFolder();
   if (localStorage.getItem("vc.syncFolder") !== folder) {     // 다른 계정 → 연결 정보만 초기화 (지우지 않음)
@@ -163,6 +164,19 @@ export async function syncOnce(say = () => {}) {
       st.uploaded++;
     } catch (e) { st.errors.push(`올리기 실패(${r0.name || r0.id}): ${e.message}`); }
   }
+  // PC로 보낼 원본 (한 방향: PC 가 받으면 드라이브 사본을 휴지통으로 옮긴다. 이 기기의 기록은 그대로)
+  for (const r0 of (await db.listImages()).filter((x) => x.kind === "original" && x.pcInbox === "pending")) {
+    try {
+      const r = await db.getImage(r0.id); if (!r) continue;
+      const u = r.uid || uid();
+      say(`PC로 보내는 중: ${r.name || u.slice(0, 8)}`);
+      const now = new Date().toISOString();
+      await upload(folder, `inbox_${u.slice(0, 8)}.png`, r.blob, { v: META_VERSION, uid: u, kind: "inbox", name: r.name || "",
+        note: r.pcNote || "", tags: r.tags || "", project: r.pcProject || "", created: r.created, updated: now });
+      await db.updateImage(r.id, { uid: u, pcInbox: "sent", pcSentAt: now }, { silent: true });
+      st.sentToPc++;
+    } catch (e) { st.errors.push(`PC로 보내기 실패(${r0.name || r0.id}): ${e.message}`); }
+  }
   localStorage.setItem("vc.lastSync", new Date().toISOString());
   return st;
 }
@@ -171,6 +185,7 @@ export function summary(st) {
   const p = [`올림 ${st.uploaded}`, `받음 ${st.downloaded}`];
   if (st.meta) p.push(`정보 갱신 ${st.meta}`);
   if (st.deleted) p.push(`삭제 반영 ${st.deleted}`);
+  if (st.sentToPc) p.push(`PC로 보냄 ${st.sentToPc}`);
   if (st.errors.length) p.push(`오류 ${st.errors.length}`);
   return p.join(" · ");
 }

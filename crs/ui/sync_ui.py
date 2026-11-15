@@ -13,14 +13,7 @@ from .. import keystore
 from .workers import FuncWorker
 
 log = logging.getLogger(__name__)
-SECRET_NAME = "google_client_secret"
-REFRESH_NAME = "google_refresh_token"
-
-
-def make_auth(ws):
-    from ..sync.drive import GoogleAuth
-    return GoogleAuth(ws.settings.get("google_client_id") or "", keystore.get_secret(SECRET_NAME) or "",
-                      lambda: keystore.get_secret(REFRESH_NAME), lambda v: keystore.set_secret(REFRESH_NAME, v))
+from ..sync.account import REFRESH_NAME, SECRET_NAME, make_auth  # noqa: F401
 
 
 class SyncManager(QObject):

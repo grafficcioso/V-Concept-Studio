@@ -42,6 +42,17 @@ Python 3.12/3.13 설치 후 `build_windows.bat` 실행 → `dist\VConceptStudio\
 - 브라우저에서 OpenAI 를 직접 호출합니다(중간 서버 없음, 추가 비용 없음).
 - 소스: `web/` · 배포: `.github/workflows/pages.yml` (main 에 푸시하면 브라우저 테스트 후 자동 배포)
 
+## 1-2. Claude Code 연결 (MCP 모드) · 폰에서 원격으로 시키기
+
+1. 프로그램 **설정 → Claude 연결** 에서 "Claude Code 연결 허용"을 켜고, 1번 최대 장수·하루 상한을 정합니다.
+2. 같은 화면의 등록 명령을 [복사]해 명령 프롬프트에 붙여 넣습니다:
+   `claude mcp add --scope user v-concept -- "C:\...\VConceptStudio-mcp.exe"`
+3. 밖에서 폰으로 시키려면 PC에서 `claude remote-control` 을 실행해 두고, 폰의 Claude 앱 → **Code** 탭에서 내 PC 세션을 엽니다. PC는 절전 모드 '안 함'으로 켜 둡니다.
+4. 폰 웹앱의 **PC로 원본 보내기** 로 원본을 보내면 PC가 동기화 때 받아 '받은 원본'으로 넣습니다.
+
+예: "받은 원본 확인하고 메모대로 사면도까지 뽑아 줘", "캐릭터A 사면도를 D:\정리 에 캐릭터A_사면도_01 식으로 복사해 줘".
+Claude 연결로 하는 생성은 확인 창 없이 보내지는 대신, 한도를 넘는 요청은 거절됩니다.
+
 ## 2. OpenAI API 키 발급 · 등록
 
 1. <https://platform.openai.com> 로그인 → **API keys**에서 키 생성 (`sk-…`). 결제 수단/크레딧 등록이 필요합니다.
