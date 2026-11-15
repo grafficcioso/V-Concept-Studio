@@ -156,10 +156,28 @@ class Settings:
         if save:
             self.save()
 
-    def save(self):
+    def save(self) -> bool:
+        """설정 저장. 백신·동기화 프로그램이 잠깐 파일을 잡고 있으면 몇 번 다시 시도하고,
+        그래도 안 되면 프로그램을 멈추지 않고 다음 저장 때 다시 쓴다."""
+        import logging
+        import time
+        text = json.dumps(self.data, ensure_ascii=False, indent=2)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(self.path)
+        last = None
+        for attempt in range(8):
+            try:
+                tmp.write_text(text, encoding="utf-8")
+                tmp.replace(self.path)
+                return True
+            except OSError as e:
+                last = e
+                time.sleep(0.05 * (attempt + 1))
+        try:
+            self.path.write_text(text, encoding="utf-8")  # 바꿔치기 대신 직접 쓰기 (최후 수단)
+            return True
+        except OSError:
+            logging.getLogger(__name__).warning("설정 저장 실패(다음에 다시 시도): %s", last)
+            return False
 
 
 class AppPaths:
