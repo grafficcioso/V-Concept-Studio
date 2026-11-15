@@ -1,35 +1,19 @@
-name: Diagnose (Windows)
+name: Diagnose
 on:
   push:
     branches: ["diag/**"]
 jobs:
-  diag:
-    runs-on: windows-latest
-    timeout-minutes: 20
+  cors:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: python -m pip install -r requirements.txt
-      - name: Make a dump during an artificial stall
-        id: dump
-        shell: pwsh
+      - name: CORS preflight to OpenAI (as a browser on GitHub Pages would send)
         run: |
-          $out = python tools/diag_dump.py
-          $out
-          $p = ($out | Select-String "DUMP_PATH=(.*)").Matches[0].Groups[1].Value
-          "path=$p" >> $env:GITHUB_OUTPUT
-      - name: Read the dump with cdb
-        shell: pwsh
-        run: |
-          $cdb = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Debuggers" -Recurse -Filter cdb.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
-          Write-Host "cdb: $($cdb.FullName)"
-          if (-not $cdb) { Write-Host "no cdb"; exit 0 }
-          & $cdb.FullName -z "${{ steps.dump.outputs.path }}" -y "srv*C:\sym*https://msdl.microsoft.com/download/symbols" -c ".reload;~0k 12;q" 2>&1 | Select-Object -Last 20
-      - name: Dump as base64 (for offline parser test)
-        shell: pwsh
-        run: |
-          Write-Host "B64BEGIN"
-          [Convert]::ToBase64String([IO.File]::ReadAllBytes("${{ steps.dump.outputs.path }}")) -split '(.{4000})' | Where-Object { $_ } | ForEach-Object { Write-Host "B64:$_" }
-          Write-Host "B64END"
+          for ep in images/edits images/generations responses models; do
+            echo "=== OPTIONS /v1/$ep"
+            curl -s -o /dev/null -D - -X OPTIONS "https://api.openai.com/v1/$ep" \
+              -H "Origin: https://grafficcioso.github.io" \
+              -H "Access-Control-Request-Method: POST" \
+              -H "Access-Control-Request-Headers: authorization,content-type" | grep -iE "^HTTP|access-control" || true
+          done
+          echo "=== GET /v1/models with Origin (no key)"
+          curl -s -o /dev/null -D - "https://api.openai.com/v1/models" -H "Origin: https://grafficcioso.github.io" | grep -iE "^HTTP|access-control" || true
