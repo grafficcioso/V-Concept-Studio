@@ -18,7 +18,7 @@ from ..pricing import GENERIC_MODEL
 from ..services.image_service import GenerationError
 from .workers import FuncWorker
 
-TAB_KEYS = ["api", "prompts", "styles", "models", "budget", "storage", "update"]
+TAB_KEYS = ["api", "prompts", "styles", "models", "budget", "google", "storage", "update"]
 COLS = ["모델 ID", "표시 이름", "품질 (쉼표)", "크기 (쉼표)", "배경 (쉼표)", "임의 크기", "입력 충실도", "구형",
         "텍스트 입력 $/1M", "이미지 입력 $/1M", "이미지 출력 $/1M", "메모", "영역 지정(markup)"]
 
@@ -40,6 +40,9 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self.styles, "화풍 프리셋")
         self.tabs.addTab(self._models_tab(), "모델 · 요금표")
         self.tabs.addTab(self._budget_tab(), "예산 · 충전액")
+        from .sync_ui import SyncSettingsWidget
+        self.google = SyncSettingsWidget(ws, getattr(parent, "sync", None))
+        self.tabs.addTab(self.google, "구글 드라이브")
         self.tabs.addTab(self._storage_tab(), "저장 위치")
         self.tabs.addTab(self._update_tab(), "업데이트")
         self.update_requested = None
@@ -666,6 +669,7 @@ class SettingsDialog(QDialog):
     def done(self, code):
         if self._worker is not None:
             self._worker.wait(35000)
+        self.google.wait(1000)
         super().done(code)
 
 

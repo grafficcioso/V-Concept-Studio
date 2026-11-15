@@ -244,3 +244,121 @@ def test_key_test_and_settings_persist(page, tmp_path):
     pg.click(".tabbar [data-go=settings]")
     pg.wait_for_function("document.querySelector('#usageSummary').textContent.includes('추정 잔액')")
     assert "추정 잔액 $4.9" in pg.text_content("#usageSummary")
+
+
+# ============================================================ 드라이브 동기화 (PC ↔ 드라이브 ↔ 웹)
+GIS_MOCK = """
+window.google = { accounts: { oauth2: {
+  initTokenClient: (cfg) => ({ requestAccessToken: () => setTimeout(() => cfg.callback({ access_token: 'tok', expires_in: 3600 }), 20) }),
+  revoke: () => {} } } };
+"""
+
+
+def _pc(tmp_path, monkeypatch, name):
+    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(ROOT / "tests"))
+    from crs.config import Settings
+    from crs.workspace import Workspace
+    monkeypatch.setenv("CRS_CONFIG_DIR", str(tmp_path / f"cfg_{name}"))
+    s = Settings()
+    s.set("data_root", str(tmp_path / f"data_{name}"))
+    return Workspace(s)
+
+
+def _pc_sync(ws, drive):
+    from crs.sync.drive import DriveClient
+    from crs.sync.engine import SyncEngine
+    return SyncEngine(ws, DriveClient(lambda: "tok", api=drive.base + "/drive/v3", upload=drive.base + "/upload/drive/v3")).sync()
+
+
+def _wait_text(pg, sel, text, timeout=15000):
+    pg.wait_for_function(f"document.querySelector({json.dumps(sel)}).textContent.includes({json.dumps(text)})", timeout=timeout)
+
+
+def test_drive_sync_pc_web_roundtrip(browser, site, tmp_path, monkeypatch):
+    sys.path.insert(0, str(ROOT / "tests"))
+    from fake_drive import FakeDrive
+    drive = FakeDrive().start()
+    try:
+        # PC: 결과 1 + 에셋 1 을 올림
+        pc = _pc(tmp_path, monkeypatch, "pc")
+        pid = pc.create_project("캐릭터A")
+        buf = io.BytesIO()
+        Image.new("RGBA", (40, 30), (255, 0, 0, 255)).save(buf, "PNG")
+        out_id = pc.save_output(pid, buf.getvalue(), function="front_view", source_image_id=None, prompt="p", preset_id=None,
+                                preset_name="", model="gpt-image-2.6-sunburst", quality="low", size="auto", background="auto",
+                                params={}, request_id="r", usage=None, est_cost_usd=None)
+        pc.db.update_image(out_id, name="PC 정면")
+        asset_id = pc.register_asset(Image.new("RGBA", (20, 20), (0, 255, 0, 255)), "Hair", "트윈테일", "핑크")
+        assert _pc_sync(pc, drive).uploaded == 2
+
+        # 웹: 연결 → 받기
+        ctx = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, has_touch=True)
+        pg = ctx.new_page()
+        api = Api()
+        pg.route("https://api.openai.com/**", api.handle)
+        pg.route("https://accounts.google.com/**", lambda r, q: r.fulfill(status=200, body="", headers={"content-type": "text/javascript"}))
+        pg.add_init_script(GIS_MOCK + f"window.__VC_DRIVE_BASE = {json.dumps(drive.base)};")
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(site)
+        pg.wait_for_selector("#fnChips .chip")
+        pg.click(".tabbar [data-go=settings]")
+        pg.fill("#gClientId", "web.apps.googleusercontent.com")
+        pg.click("#gConnect")
+        _wait_text(pg, "#gStatus", "받음 2")
+        pg.click(".tabbar [data-go=history]")
+        pg.wait_for_selector("#histGrid .thumb")
+        assert pg.locator("#histGrid .thumb").count() == 1 and "PC 정면" in pg.text_content("#histGrid")
+        pg.click("#histFilter [data-f=asset]")
+        _wait_text(pg, "#histGrid", "트윈테일")
+        assert pg.locator("#histGrid .thumb").count() == 1
+        pg.screenshot(path=str(SHOTS / "sync_history.png"))
+
+        # 웹에서 즐겨찾기 → 자동 동기화로 드라이브에 반영 → PC 가 받음
+        pg.click("#histFilter [data-f=output]")
+        _wait_text(pg, "#histGrid", "PC 정면")
+        pg.click("#histGrid .thumb >> nth=0")
+        pg.click("#detail [data-dact=fav]")
+        pg.click("#detail [data-close]")
+        pg.wait_for_function("document.querySelector('#gStatus').textContent.includes('정보 갱신 1')", timeout=15000)
+        assert _pc_sync(pc, drive).meta_pulled == 1 and pc.db.get_image(out_id)["favorite"] == 1
+
+        # 웹에서 새로 생성 → 자동 업로드 → PC 가 '웹앱' 프로젝트로 받음
+        pg.click(".tabbar [data-go=settings]")
+        pg.fill("#keyInput", "sk-test-WEB1234567890")
+        pg.click("#keySave")
+        pg.click(".tabbar [data-go=create]")
+        p = tmp_path / "w.png"
+        Image.new("RGB", (64, 64), "white").save(p)
+        pg.set_input_files("#fileInput", str(p))
+        pg.wait_for_selector("#inputImg:not([hidden])")
+        pg.click("#genBtn")
+        pg.wait_for_selector("#modal:not([hidden])")
+        pg.click("#modalBtns button.primary")
+        pg.wait_for_selector("#resultCard:not([hidden])")
+        pg.wait_for_function("Object.keys(window).length && true")
+        deadline = __import__("time").time() + 15
+        while len(drive.items()) < 3 and __import__("time").time() < deadline:
+            pg.wait_for_timeout(200)
+        assert len(drive.items()) == 3
+        st = _pc_sync(pc, drive)
+        assert st.downloaded == 1 and pc.db.get_project_by_name("웹앱") is not None
+
+        # 웹에서 에셋 삭제 → 드라이브 휴지통 → PC 에서도 삭제
+        pg.click(".tabbar [data-go=history]")
+        pg.click("#histFilter [data-f=asset]")
+        _wait_text(pg, "#histGrid", "트윈테일")
+        pg.click("#histGrid .thumb >> nth=0")
+        pg.click("#detail [data-dact=delete]")
+        pg.wait_for_selector("#modal:not([hidden])")
+        pg.click("#modalBtns button.danger")
+        while len(drive.items()) > 2 and __import__("time").time() < deadline + 15:
+            pg.wait_for_timeout(200)
+        assert len(drive.items()) == 2
+        assert _pc_sync(pc, drive).deleted_local == 1 and pc.db.get_asset(asset_id) is None
+        assert not errors, errors
+        ctx.close()
+        pc.close()
+    finally:
+        drive.stop()

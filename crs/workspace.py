@@ -234,7 +234,7 @@ class Workspace:
             row = self.db.get_image(row["source_image_id"])
         return None
 
-    def delete_image(self, image_id):
+    def delete_image(self, image_id, tombstone=True):
         row = self.db.get_image(image_id)
         if not row:
             return
@@ -245,7 +245,7 @@ class Workspace:
                     p.unlink()
                 except OSError as e:
                     log.warning("파일 삭제 실패: %s", e)
-        self.db.delete_image(image_id)
+        self.db.delete_image(image_id, tombstone=tombstone)
         self.write_project_json(row["project_id"])
 
     # ---- 에셋 라이브러리 -------------------------------------------------
@@ -278,7 +278,7 @@ class Workspace:
             preset_id=src_row["preset_id"] if src_row else None,
             params_json=json.dumps(params, ensure_ascii=False) if params else None)
 
-    def delete_asset(self, asset_id):
+    def delete_asset(self, asset_id, tombstone=True):
         row = self.db.get_asset(asset_id)
         if not row:
             return
@@ -289,7 +289,7 @@ class Workspace:
                     p.unlink()
                 except OSError:
                     pass
-        self.db.delete_asset(asset_id)
+        self.db.delete_asset(asset_id, tombstone=tombstone)
 
     # ---- 사용량 ----------------------------------------------------------
     def month_start(self) -> str:

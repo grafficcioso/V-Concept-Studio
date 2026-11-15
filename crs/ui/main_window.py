@@ -47,6 +47,18 @@ class MainWindow(QMainWindow):
         self.updates = UpdateManager(ws, self, is_busy=lambda: self.ctl.is_busy() or self.gen.style_ctl.is_busy())
         self.updates.quitRequested.connect(self._quit_for_update)
         self._quitting_for_update = False
+        from .sync_ui import SyncManager
+        self.sync = SyncManager(ws, self)
+        self.sync.started.connect(lambda: self.gen.set_sync_status("☁ 동기화 중…", busy=True))
+        self.sync.progress.connect(lambda t: self.gen.set_sync_status("☁ " + t, busy=True))
+        self.sync.finished.connect(self._sync_done)
+        self.sync.failed.connect(self._sync_failed)
+        self.gen.syncRequested.connect(self._sync_clicked)
+        self.ctl.finished.connect(lambda *_: self.sync.schedule())
+        self.gen.assetsChanged.connect(lambda: self.sync.schedule())
+        self.gen.itemsEdited.connect(lambda: self.sync.schedule())
+        self.library.assetsEdited.connect(lambda: self.sync.schedule())
+        self.gen.set_sync_status("☁ 연결됨" if self.sync.connected() else "☁ 드라이브 미연결")
         from ..watchdog import GuiWatchdog
         self.watchdog = GuiWatchdog(ws.paths.logs, parent=self)
 
@@ -55,6 +67,25 @@ class MainWindow(QMainWindow):
         argv = sys.argv if argv is None else argv
         QTimer.singleShot(300, lambda: show_post_update(self.ws, self, argv))
         self.updates.check_on_startup()
+        self.sync.schedule(6000)
+
+    def _sync_clicked(self):
+        if self.sync.connected():
+            self.sync.sync_now()
+        else:
+            self.open_settings("google")
+
+    def _sync_done(self, stats):
+        from ..db import now_iso
+        self.gen.set_sync_status(f"☁ {now_iso()[11:16]} 동기화 · {stats.summary()}", error=bool(stats.errors),
+                                 tooltip="\n".join(stats.errors[:10]) or "구글 드라이브와 동기화했습니다.")
+        if stats.downloaded or stats.meta_pulled or stats.deleted_local:
+            self.gen.reload_projects(self.gen.project_id)
+            self.gen.reload_lists()
+            self.library.reload()
+
+    def _sync_failed(self, msg):
+        self.gen.set_sync_status("☁ 동기화 실패", error=True, tooltip=msg)
 
     def _usage_changed(self):
         self.usage.reload()
@@ -83,6 +114,7 @@ class MainWindow(QMainWindow):
         self.gen.reload_styles()
         self.gen.refresh_api_status()
         self.usage.reload()
+        self.gen.set_sync_status("☁ 연결됨" if self.sync.connected() else "☁ 드라이브 미연결")
         if getattr(dlg, "update_requested", None):
             self.updates.offer(dlg.update_requested)
 
@@ -122,5 +154,7 @@ class MainWindow(QMainWindow):
             self.ctl.wait(8000)
         if self.gen.style_ctl.is_busy():
             self.gen.style_ctl.wait(8000)
+        if self.sync.is_busy():
+            self.sync.wait(15000)
         self.ws.close()
         e.accept()

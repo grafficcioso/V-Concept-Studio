@@ -3,8 +3,9 @@ import { db } from "./db.js";
 import { ApiError, editImage, listImageModels } from "./api.js";
 import { Catalog } from "./pricing.js";
 import { PaintLayer, decode, prepareForApi, saveOrShare, sizeOf, thumbnail } from "./images.js";
+import { clearToken, hasValidToken, requestToken, summary as syncSummary, syncOnce } from "./sync.js";
 
-export const WEB_VERSION = "0.1.0";
+export const WEB_VERSION = "0.2.0";
 
 const FUNCTIONS = [
   { key: "front_view", label: "정면화", desc: "원화를 정면 머리 일러스트로 다시 그립니다." },
@@ -28,12 +29,14 @@ const AREA_WHOLE = "Apply the requested change to the whole image.";
 const REF_ORIGINAL = "The SECOND image is the original source illustration of the same character. Use it as the reference for the character's original look, art style, linework, colors, and hair shapes.";
 
 const $ = (id) => document.getElementById(id);
-const state = { fn: "front_view", inputId: null, resultId: null, detailId: null, busy: null, catalog: new Catalog(), defaults: {}, urls: [] };
+const state = { fn: "front_view", inputId: null, resultId: null, detailId: null, busy: null, catalog: new Catalog(), defaults: {}, urls: [],
+  config: {}, syncing: false, syncTimer: null };
 
 // ------------------------------------------------------------------ 설정 저장
 const KEY_STORE = "vc.apiKey";
 const SET_STORE = "vc.settings";
-const DEFAULT_SETTINGS = { model: "", quality: "auto", size: "auto", background: "auto", demo: false, credit: 0, creditSince: "", budget: 0, confirm: true };
+const DEFAULT_SETTINGS = { model: "", quality: "auto", size: "auto", background: "auto", demo: false, credit: 0, creditSince: "", budget: 0, confirm: true,
+  syncAuto: true };
 function settings() { try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SET_STORE) || "{}") }; } catch { return { ...DEFAULT_SETTINGS }; } }
 function saveSettings(patch) { localStorage.setItem(SET_STORE, JSON.stringify({ ...settings(), ...patch })); }
 const apiKey = () => localStorage.getItem(KEY_STORE) || "";
@@ -77,6 +80,7 @@ async function boot() {
     const res = await fetch("data/models.json", { cache: "no-cache" });
     state.catalog = new Catalog(await res.json());
   } catch { toast("요금표를 불러오지 못했습니다."); }
+  try { state.config = await (await fetch("data/config.json", { cache: "no-cache" })).json(); } catch { state.config = {}; }
   await Promise.all(PROMPT_KEYS.map(async (k) => {
     try { state.defaults[k] = (await (await fetch(`data/prompts/${k}.md`, { cache: "no-cache" })).text()).trim(); } catch { state.defaults[k] = ""; }
   }));
@@ -85,6 +89,8 @@ async function boot() {
   const last = (await db.listImages()).find((r) => r.kind === "original");
   if (last) await setInput(last.id);
   updateEstimate();
+  refreshSyncStatus();
+  if (hasValidToken()) doSync(false);
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
@@ -244,6 +250,7 @@ async function runJob(job) {
       message: s.demo ? "데모" : result.usage ? null : "사용량 정보 없음" });
     await showResult(id);
     toast(`완료 (${Math.round(result.elapsed || 0)}초)`);
+    scheduleSync();
   } catch (e) {
     const err = e instanceof ApiError ? e : new ApiError("unknown", `예상하지 못한 오류: ${e && e.message}`, { billingUncertain: true });
     await db.addUsage({ ...base, status: err.billingUncertain && !s.demo ? "unknown" : "failed", cost: null, request_id: err.requestId, message: `[${err.kind}] ${err.message}`.slice(0, 400) });
@@ -288,6 +295,7 @@ async function act(action, id) {
   } else if (action === "fav") {
     await db.updateImage(id, { favorite: rec.favorite ? 0 : 1 });
     toast(rec.favorite ? "즐겨찾기 해제" : "★ 즐겨찾기");
+    scheduleSync();
     if (id === state.resultId) showResult(id);
     if (!$("detail").hidden) openDetail(id);
   } else if (action === "use") {
@@ -299,11 +307,11 @@ async function act(action, id) {
       await db.deleteImage(id);
       if (state.inputId === id) await setInput(null);
       if (state.resultId === id) { state.resultId = null; $("resultCard").hidden = true; }
-      $("detail").hidden = true; renderHistory();
+      $("detail").hidden = true; renderHistory(); scheduleSync();
     }
   } else if (action === "meta") {
     await db.updateImage(id, { name: $("detailName").value.trim(), tags: $("detailTags").value.trim() });
-    toast("저장했습니다."); renderHistory();
+    toast("저장했습니다."); renderHistory(); scheduleSync();
   }
 }
 
@@ -314,14 +322,14 @@ async function renderHistory() {
   const f = document.querySelector("#histFilter .on").dataset.f;
   const q = $("histSearch").value.trim().toLowerCase();
   const rows = (await db.listImages()).filter((r) =>
-    (f === "fav" ? r.favorite : r.kind === f) && (!q || `${r.name} ${r.tags}`.toLowerCase().includes(q)));
+    (f === "fav" ? r.favorite : r.kind === f) && (!q || `${r.name} ${r.tags} ${r.category || ""}`.toLowerCase().includes(q)));
   const grid = $("histGrid"); grid.innerHTML = "";
   $("histEmpty").hidden = rows.length > 0;
   rows.forEach((r) => {
     const d = document.createElement("div"); d.className = "thumb"; d.dataset.id = r.id;
     const img = document.createElement("img"); img.loading = "lazy"; img.src = objUrl(r.thumb); d.appendChild(img);
     const cap = document.createElement("div"); cap.className = "cap";
-    cap.textContent = r.name || `${LABELS[r.function] || "원본"} ${r.created.slice(5, 16).replace("T", " ")}`; d.appendChild(cap);
+    cap.textContent = r.name || `${r.kind === "asset" ? (r.category || "에셋") : (LABELS[r.function] || "원본")} ${r.created.slice(5, 16).replace("T", " ")}`; d.appendChild(cap);
     if (r.favorite) { const st = document.createElement("div"); st.className = "star"; st.textContent = "★"; d.appendChild(st); }
     d.onclick = () => openDetail(r.id);
     grid.appendChild(d);
@@ -331,10 +339,10 @@ async function renderHistory() {
 async function openDetail(id) {
   const rec = await db.getImage(id); if (!rec) return;
   state.detailId = id;
-  $("detailTitle").textContent = (LABELS[rec.function] || "원본") + (rec.favorite ? " ★" : "");
+  $("detailTitle").textContent = (rec.kind === "asset" ? `에셋 · ${rec.category || ""}` : (LABELS[rec.function] || "원본")) + (rec.favorite ? " ★" : "");
   $("detailImg").src = objUrl(rec.blob);
   $("detailName").value = rec.name || ""; $("detailTags").value = rec.tags || "";
-  $("detailMeta").textContent = [rec.created.replace("T", " ").slice(0, 19), rec.model, rec.quality, rec.size,
+  $("detailMeta").textContent = [rec.created.replace("T", " ").slice(0, 19), rec.project ? `프로젝트 ${rec.project}` : null, rec.driveId ? "☁ 드라이브에 있음" : null, rec.model, rec.quality, rec.size,
     rec.cost != null ? `앱 추정 $${rec.cost.toFixed(4)}` : null, rec.requestId ? `요청 ${rec.requestId}` : null].filter(Boolean).join(" · ");
   $("detail").hidden = false;
 }
@@ -374,6 +382,45 @@ async function sendRetouch() {
   if (state.resultId && (await db.getImage(state.resultId))?.sourceId === id) rtStates.delete(id);
 }
 
+// ------------------------------------------------------------------ 구글 드라이브 동기화
+const gClientId = () => localStorage.getItem("vc.gClientId") || state.config.google_web_client_id || "";
+function refreshSyncStatus(text) {
+  const last = localStorage.getItem("vc.lastSync");
+  const el = $("syncStatus");
+  el.textContent = state.syncing ? "☁ 동기화 중" : hasValidToken() ? "☁ 연결됨" : "☁";
+  el.title = text || (last ? "마지막 동기화 " + new Date(last).toLocaleString() : "구글 드라이브 동기화");
+  const g = $("gStatus");
+  if (g) g.textContent = (text ? text + "\n" : "") + (hasValidToken() ? "● 연결됨" : "○ 연결 안 됨 (버튼을 누르면 구글 로그인 창이 뜹니다)")
+    + (last ? ` · 마지막 동기화 ${new Date(last).toLocaleString()}` : "");
+  if (g) g.style.whiteSpace = "pre-wrap";
+}
+
+/** interactive=true 일 때만 구글 로그인 창을 띄운다 (브라우저는 버튼을 누른 순간에만 팝업을 허용) */
+async function doSync(interactive) {
+  if (state.syncing) return;
+  if (!hasValidToken()) {
+    if (!interactive) return;
+    try { await requestToken(gClientId()); }
+    catch (e) { refreshSyncStatus("✖ " + e.message); toast(e.message); return; }
+  }
+  state.syncing = true; refreshSyncStatus();
+  try {
+    const st = await syncOnce((t) => { $("syncStatus").textContent = "☁ " + t.slice(0, 18); });
+    const msg = "동기화 완료 · " + syncSummary(st) + (st.errors.length ? "\n" + st.errors.slice(0, 5).join("\n") : "");
+    state.syncing = false; refreshSyncStatus(msg);
+    if (interactive || st.downloaded || st.deleted) toast(syncSummary(st));
+    if (document.getElementById("view-history").classList.contains("active")) renderHistory();
+    if (state.inputId && !(await db.getImage(state.inputId))) await setInput(null);
+  } catch (e) {
+    state.syncing = false; refreshSyncStatus("✖ 동기화 실패: " + e.message);
+    if (interactive) toast("동기화 실패: " + e.message);
+  }
+}
+function scheduleSync() {
+  if (!settings().syncAuto || !hasValidToken()) return;
+  clearTimeout(state.syncTimer); state.syncTimer = setTimeout(() => doSync(false), 3000);
+}
+
 // ------------------------------------------------------------------ 설정 화면
 async function refreshMoney() {
   const s = settings(); const usage = await db.listUsage();
@@ -391,6 +438,8 @@ async function renderSettings() {
   const s = settings();
   $("keyInput").value = ""; $("keyInput").placeholder = apiKey() ? `등록됨 (${apiKey().slice(0, 3)}…${apiKey().slice(-4)}) — 바꾸려면 새 키 입력` : "sk-...";
   $("demoMode").checked = !!s.demo; $("confirmReq").checked = !!s.confirm;
+  $("gClientId").value = localStorage.getItem("vc.gClientId") || ""; $("gClientId").placeholder = state.config.google_web_client_id || "xxxx.apps.googleusercontent.com";
+  $("gAuto").checked = !!s.syncAuto; refreshSyncStatus();
   $("creditInput").value = s.credit || ""; $("creditSince").value = s.creditSince || ""; $("budgetInput").value = s.budget || "";
   const pf = $("promptFn");
   if (!pf.options.length) PROMPT_KEYS.forEach((k) => { const o = document.createElement("option"); o.value = k; o.textContent = LABELS[k]; pf.appendChild(o); });
@@ -447,6 +496,18 @@ function bindEvents() {
     try { const ids = await listImageModels(apiKey()); $("keyMsg").textContent = `✔ 연결 성공 · 이미지 모델 ${ids.length}개: ${ids.join(", ")} (조회는 과금되지 않습니다)`; }
     catch (e) { $("keyMsg").textContent = "✖ " + e.message; }
   };
+  $("syncStatus").onclick = () => doSync(true);
+  $("gConnect").onclick = () => {
+    const v = $("gClientId").value.trim();
+    if (v) localStorage.setItem("vc.gClientId", v); else localStorage.removeItem("vc.gClientId");
+    if (!gClientId()) { toast("웹 클라이언트 ID 를 넣어 주세요."); return; }
+    doSync(true);
+  };
+  $("gDisconnect").onclick = () => {
+    try { window.google?.accounts?.oauth2?.revoke?.(JSON.parse(sessionStorage.getItem("vc.gtoken") || "{}").value || "", () => {}); } catch { /* 무시 */ }
+    clearToken(); localStorage.removeItem("vc.gconsented"); refreshSyncStatus("연결을 해제했습니다. 이 기기의 기록과 드라이브 파일은 그대로입니다.");
+  };
+  $("gAuto").onchange = () => saveSettings({ syncAuto: $("gAuto").checked });
   $("demoMode").onchange = () => { saveSettings({ demo: $("demoMode").checked }); refreshStatus(); updateEstimate(); };
   $("confirmReq").onchange = () => saveSettings({ confirm: $("confirmReq").checked });
   $("moneySave").onclick = () => {

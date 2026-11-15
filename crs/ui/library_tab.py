@@ -18,6 +18,7 @@ IMAGE_FILTER = "이미지 (*.png *.jpg *.jpeg *.webp)"
 
 class LibraryTab(QWidget):
     addToCompose = Signal(int)
+    assetsEdited = Signal()
     sendToProject = Signal(int)
 
     def __init__(self, ws, parent=None):
@@ -197,6 +198,7 @@ class LibraryTab(QWidget):
             except Exception as e:
                 errors.append(f"{Path(f).name}: {e}")
         self.reload()
+        self.assetsEdited.emit()
         if errors:
             QMessageBox.warning(self, "에셋 추가", "\n".join(errors))
 
@@ -206,6 +208,7 @@ class LibraryTab(QWidget):
         self.ws.db.update_asset(self.asset_id, name=self.name.text().strip(), tags=self.tags.text().strip(),
                                 note=self.note.toPlainText().strip(), category=self.category.currentData())
         self.reload()
+        self.assetsEdited.emit()
 
     def copy(self):
         a = self.ws.db.get_asset(self.asset_id)
@@ -236,3 +239,4 @@ class LibraryTab(QWidget):
             self.ws.delete_asset(a["id"])
             self.asset_id = None
             self.reload()
+            self.assetsEdited.emit()

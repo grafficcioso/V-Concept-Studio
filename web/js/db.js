@@ -1,6 +1,6 @@
 // IndexedDB 저장소: 이미지(원본/결과)와 사용량 기록. 이 기기·이 브라우저 안에만 저장된다.
 const DB_NAME = "vconcept";
-const DB_VER = 1;
+const DB_VER = 2;
 let dbp = null;
 
 function open() {
@@ -14,6 +14,7 @@ function open() {
         s.createIndex("kind", "kind");
       }
       if (!db.objectStoreNames.contains("usage")) db.createObjectStore("usage", { keyPath: "id", autoIncrement: true });
+      if (!db.objectStoreNames.contains("tombstones")) db.createObjectStore("tombstones", { keyPath: "uid" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -42,13 +43,23 @@ export const db = {
     return tx("images", "readwrite", (s) => req2p(s.add(rec)));
   },
   async getImage(id) { return id ? tx("images", "readonly", (s) => req2p(s.get(id))) : null; },
-  async updateImage(id, fields) {
+  /** silent=false(기본)이고 이름·태그·즐겨찾기·분류가 바뀌면 동기화용 수정 시각을 찍는다 */
+  async updateImage(id, fields, { silent = false } = {}) {
+    if (!silent && ["name", "tags", "note", "favorite", "category"].some((k) => k in fields)) fields = { ...fields, metaUpdated: new Date().toISOString() };
     return tx("images", "readwrite", async (s) => {
       const cur = await req2p(s.get(id));
       if (cur) await req2p(s.put({ ...cur, ...fields }));
     });
   },
-  async deleteImage(id) { return tx("images", "readwrite", (s) => req2p(s.delete(id))); },
+  /** 드라이브에 올라간 항목을 지우면 '지움 표시'를 남겨 다음 동기화 때 드라이브 휴지통으로 옮긴다 */
+  async deleteImage(id, { tombstone = true } = {}) {
+    const cur = await this.getImage(id);
+    if (tombstone && cur && cur.driveId && cur.uid) await tx("tombstones", "readwrite", (s) => req2p(s.put({ uid: cur.uid, driveId: cur.driveId })));
+    return tx("images", "readwrite", (s) => req2p(s.delete(id)));
+  },
+  async listTombstones() { return tx("tombstones", "readonly", (s) => req2p(s.getAll())); },
+  async dropTombstone(uid) { return tx("tombstones", "readwrite", (s) => req2p(s.delete(uid))); },
+  async clearTombstones() { return tx("tombstones", "readwrite", (s) => req2p(s.clear())); },
   async listImages() {
     // 큰 Blob 은 빼고 목록용 정보만
     const all = await tx("images", "readonly", (s) => req2p(s.getAll()));

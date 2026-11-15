@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS styles(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL, summary TEXT DEFAULT '',
   source_image_id INTEGER REFERENCES images(id) ON DELETE SET NULL, model TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sync_tombstones(
+  uid TEXT PRIMARY KEY, drive_id TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_images_project ON images(project_id, kind);
 CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_log(created_at);
 """
@@ -57,6 +59,26 @@ def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def now_precise() -> str:
+    """동기화용 수정 시각: UTC, 마이크로초까지 (웹앱과 같은 형식: ...Z)."""
+    from datetime import timezone
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def ts_key(text: str | None):
+    """시각 문자열 → 비교용 UTC datetime. 'Z'/오프셋이 없으면 이 PC의 현지 시각으로 본다."""
+    from datetime import timezone
+    if not text:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        d = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if d.tzinfo is None:
+        d = d.astimezone()   # 현지 시각으로 해석
+    return d.astimezone(timezone.utc)
+
+
 class Database:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -64,7 +86,20 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    SYNC_COLUMNS = (("uid", "TEXT"), ("drive_id", "TEXT"), ("meta_updated", "TEXT"), ("synced_meta", "TEXT"))
+    META_FIELDS = {"images": {"name", "tags", "note", "favorite"}, "assets": {"name", "tags", "note", "category"}}
+
+    def _migrate(self):
+        """기존 DB 에 동기화용 열을 추가한다 (v0.4)."""
+        for table in ("images", "assets"):
+            have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+            for col, typ in self.SYNC_COLUMNS:
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+            self.conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_uid ON {table}(uid)")
 
     def close(self):
         self.conn.close()
@@ -126,6 +161,8 @@ class Database:
         return self._all(sql + " ORDER BY id DESC", args)
 
     def update_image(self, image_id, **fields):
+        if self.META_FIELDS["images"] & fields.keys() and "meta_updated" not in fields:
+            fields["meta_updated"] = now_precise()
         self._update("images", image_id, fields)
 
     def image_references(self, image_id) -> dict:
@@ -135,8 +172,41 @@ class Database:
                            (image_id, image_id))["c"]
         return {"derived_outputs": derived, "assets": assets}
 
-    def delete_image(self, image_id):
+    def delete_image(self, image_id, tombstone=True):
+        row = self.get_image(image_id)
+        if tombstone and row and row.get("drive_id"):
+            self._tombstone(row["uid"], row["drive_id"])
         self._delete("images", image_id)
+
+    def _tombstone(self, uid, drive_id):
+        self.conn.execute("INSERT OR REPLACE INTO sync_tombstones(uid, drive_id, created_at) VALUES(?,?,?)",
+                          (uid, drive_id, now_iso()))
+        self.conn.commit()
+
+    def tombstones(self):
+        return self._all("SELECT * FROM sync_tombstones")
+
+    def drop_tombstone(self, uid):
+        self.conn.execute("DELETE FROM sync_tombstones WHERE uid=?", (uid,))
+        self.conn.commit()
+
+    def get_project_by_name(self, name):
+        return self._one("SELECT * FROM projects WHERE name=?", (name,))
+
+    def find_by_uid(self, table, uid):
+        return self._one(f"SELECT * FROM {table} WHERE uid=?", (uid,)) if uid else None
+
+    def sync_rows(self, table):
+        if table == "images":
+            return self._all("SELECT * FROM images WHERE kind='output'")
+        return self._all("SELECT * FROM assets")
+
+    def reset_sync_links(self):
+        """다른 구글 계정/폴더로 바꿨을 때: 모든 항목을 '아직 안 올림' 상태로."""
+        for table in ("images", "assets"):
+            self.conn.execute(f"UPDATE {table} SET drive_id=NULL, synced_meta=NULL")
+        self.conn.execute("DELETE FROM sync_tombstones")
+        self.conn.commit()
 
     # ---- presets -------------------------------------------------------
     def list_presets(self, function=None):
@@ -179,9 +249,14 @@ class Database:
         return self._all(sql + " ORDER BY id DESC", args)
 
     def update_asset(self, asset_id, **fields):
+        if self.META_FIELDS["assets"] & fields.keys() and "meta_updated" not in fields:
+            fields["meta_updated"] = now_precise()
         self._update("assets", asset_id, fields)
 
-    def delete_asset(self, asset_id):
+    def delete_asset(self, asset_id, tombstone=True):
+        row = self.get_asset(asset_id)
+        if tombstone and row and row.get("drive_id"):
+            self._tombstone(row["uid"], row["drive_id"])
         self._delete("assets", asset_id)
 
     def compositions_using_asset(self, asset_id) -> list[str]:

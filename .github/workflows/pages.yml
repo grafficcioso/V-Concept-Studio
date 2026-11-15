@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["web/**", "defaults/prompts/**", "defaults/models.json", "tools/build_web.py", "tests_web/**", ".github/workflows/pages.yml"]
+    paths: ["web/**", "defaults/prompts/**", "defaults/models.json", "tools/build_web.py", "tests_web/**", "crs/sync/**", "tests/fake_drive.py", ".github/workflows/pages.yml"]
 permissions:
   contents: read
   pages: write
@@ -28,7 +28,7 @@ jobs:
         run: python tools/build_web.py _site
       - name: Browser tests (mocked OpenAI, phone screen)
         run: |
-          python -m pip install -q playwright pytest Pillow
+          python -m pip install -q -r requirements.txt playwright pytest
           python -m pytest tests_web -q
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

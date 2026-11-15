@@ -11,11 +11,15 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="css/app.css">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
 <header class="topbar">
   <div class="brand">V-Concept Studio <span class="ver" id="ver"></span></div>
-  <button class="status" id="apiStatus" data-go="settings"></button>
+  <div class="row" style="margin:0;gap:6px">
+    <button class="status" id="syncStatus">☁</button>
+    <button class="status" id="apiStatus" data-go="settings"></button>
+  </div>
 </header>
 
 <main>
@@ -82,6 +86,7 @@
       <div class="seg" id="histFilter">
         <button data-f="output" class="on">결과</button>
         <button data-f="original">원본</button>
+        <button data-f="asset">에셋</button>
         <button data-f="fav">★</button>
       </div>
       <input type="search" id="histSearch" placeholder="이름·태그 검색">
@@ -103,6 +108,19 @@
       </div>
       <div class="small" id="keyMsg"></div>
       <label class="check"><input type="checkbox" id="demoMode"> 데모 모드 (API 호출 없이 흐름만 확인, 비용 없음)</label>
+    </div>
+
+    <div class="card">
+      <div class="card-title">구글 드라이브 동기화</div>
+      <div class="muted small">PC 프로그램과 생성 결과·에셋을 주고받습니다. 같은 구글 계정으로 연결하세요. 앱이 만든 파일만 볼 수 있는 권한만 씁니다. 원본(입력) 이미지는 공유하지 않습니다.</div>
+      <label class="field">웹 클라이언트 ID<input id="gClientId" placeholder="xxxx.apps.googleusercontent.com"></label>
+      <div class="row">
+        <button class="btn primary" id="gConnect">연결 · 지금 동기화</button>
+        <button class="btn danger" id="gDisconnect">연결 해제</button>
+      </div>
+      <label class="check"><input type="checkbox" id="gAuto"> 생성·수정 후 자동 동기화 (연결된 동안)</label>
+      <div class="small" id="gStatus"></div>
+      <div class="muted small">한쪽에서 지운 항목은 드라이브 휴지통(30일 복구 가능)으로 옮겨지고 다른 기기에서도 지워집니다. 이름·태그·즐겨찾기는 나중에 고친 쪽이 남습니다. 폰에서는 보안상 약 1시간마다 다시 연결이 필요할 수 있습니다.</div>
     </div>
 
     <div class="card">

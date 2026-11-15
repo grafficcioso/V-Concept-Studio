@@ -26,6 +26,8 @@ IMAGE_FILTER = "이미지 (*.png *.jpg *.jpeg *.webp)"
 
 class GenerateTab(QWidget):
     openSettings = Signal(str)
+    syncRequested = Signal()
+    itemsEdited = Signal()
     assetsChanged = Signal()
     projectChanged = Signal()
 
@@ -78,6 +80,12 @@ class GenerateTab(QWidget):
             b.clicked.connect(fn)
             top.addWidget(b)
         top.addStretch(1)
+        self.sync_btn = QPushButton("☁")
+        self.sync_btn.setObjectName("sync_btn")
+        self.sync_btn.setFlat(True)
+        self.sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sync_btn.clicked.connect(self.syncRequested.emit)
+        top.addWidget(self.sync_btn)
         self.credit_btn = QPushButton()
         self.credit_btn.setObjectName("credit_btn")
         self.credit_btn.setFlat(True)
@@ -625,6 +633,11 @@ class GenerateTab(QWidget):
                                     + "\n추정치 · 입력 토큰 등 추가 비용 가능")
         self.estimate_label.setToolTip(self._estimate_detail)
 
+    def set_sync_status(self, text, busy=False, error=False, tooltip=""):
+        self.sync_btn.setText(text if len(text) < 60 else text[:57] + "…")
+        self.sync_btn.setToolTip(tooltip or text + "\n(클릭: 지금 동기화)")
+        self.sync_btn.setStyleSheet("color: #b3261e;" if error else ("color: #0b57d0;" if busy else "color: #333;"))
+
     def refresh_credit(self):
         c = self.ws.credit_status()
         if c is None:
@@ -737,6 +750,7 @@ class GenerateTab(QWidget):
         if row:
             self.ws.db.update_image(row["id"], favorite=0 if row["favorite"] else 1)
             self.ws.write_project_json(row["project_id"])
+            self.itemsEdited.emit()
             self.reload_lists()
             self.show_result(row["id"])
 
@@ -750,6 +764,7 @@ class GenerateTab(QWidget):
         if dlg.exec():
             self.ws.db.update_image(image_id, **dlg.values())
             self.ws.write_project_json(row["project_id"])
+            self.itemsEdited.emit()
             self.reload_lists()
             if image_id == self.result_id:
                 self.show_result(image_id)

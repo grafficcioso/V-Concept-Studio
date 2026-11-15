@@ -95,3 +95,40 @@ def mask(value: str | None) -> str:
     if not value:
         return "(없음)"
     return f"{value[:3]}…{value[-4:]}" if len(value) > 12 else "…"
+
+
+# ---- 구글 드라이브 연결 정보 (클라이언트 보안 비밀번호, 갱신 토큰) -------------------------------
+_session_extra: dict[str, str | None] = {}
+
+
+def get_secret(name: str) -> str | None:
+    kr = _secure_backend()
+    if kr is not None:
+        try:
+            v = kr.get_password(SERVICE, name)
+            if v:
+                return v
+        except Exception:
+            pass
+    return _session_extra.get(name)
+
+
+def set_secret(name: str, value: str | None) -> bool:
+    kr = _secure_backend()
+    if value is None:
+        _session_extra.pop(name, None)
+        if kr is not None:
+            try:
+                kr.delete_password(SERVICE, name)
+            except Exception:
+                pass
+        return True
+    if kr is not None:
+        try:
+            kr.set_password(SERVICE, name, value)
+            _session_extra.pop(name, None)
+            return True
+        except Exception:
+            pass
+    _session_extra[name] = value
+    return False

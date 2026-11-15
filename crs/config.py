@@ -27,6 +27,10 @@ DEFAULTS = {
     "last_run_version": "",
     "style_model": "",               # 화풍 추출용 텍스트 모델 (빈 값 = 요금표의 첫 텍스트 모델)
     "last_style_id": None,
+    "google_client_id": "",          # PC용(데스크톱 앱) 구글 OAuth 클라이언트 ID. 보안 비밀번호·토큰은 키 저장소에
+    "sync_auto": True,               # 시작할 때·생성 후 자동 동기화
+    "sync_folder_id": "",
+    "last_sync": "",
 }
 
 
