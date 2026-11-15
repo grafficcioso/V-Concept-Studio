@@ -1,0 +1,38 @@
+# 웹앱을 GitHub Pages 에 배포 (https://grafficcioso.github.io/V-Concept-Studio/)
+# 저장소 Settings → Pages → Build and deployment → Source: "GitHub Actions" 가 켜져 있어야 합니다.
+name: Deploy web app
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["web/**", "defaults/prompts/**", "defaults/models.json", "tools/build_web.py", "tests_web/**", ".github/workflows/pages.yml"]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build site
+        run: python tools/build_web.py _site
+      - name: Browser tests (mocked OpenAI, phone screen)
+        run: |
+          python -m pip install -q playwright pytest Pillow
+          python -m pytest tests_web -q
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

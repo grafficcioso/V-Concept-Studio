@@ -8,3 +8,4 @@ dist/
 *.zip
 *.zip.sha256
 release_notes.md
+_site/
