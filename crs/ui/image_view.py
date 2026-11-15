@@ -31,7 +31,13 @@ class ImageView(QGraphicsView):
         self._item: QGraphicsPixmapItem | None = None
         self._placeholder = placeholder
         self._auto_fit = True
+        self._fitting = False
+        self._last_fit_size = None
         self.setBackgroundBrush(checker_brush())
+        # 스크롤바를 쓰지 않는다(드래그로 이동). 맞춤 → 스크롤바 생김/사라짐 → 크기 변경 → 다시 맞춤의
+        # 반복을 원천 차단한다 (Windows 11 스타일 PC에서 화면 멈춤의 원인이었음).
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setRenderHints(QPainter.RenderHint.SmoothPixmapTransform | QPainter.RenderHint.Antialiasing)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -50,6 +56,9 @@ class ImageView(QGraphicsView):
             if not pm.isNull():
                 self._item = self._scene.addPixmap(pm)
                 self._item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
+                # 기본값(MaskShape)은 투명 이미지의 불투명 픽셀 외곽선을 통째로 경로로 만든다.
+                # 머리카락처럼 복잡한 투명 결과에서는 이 계산이 몇 초씩 걸려 화면이 멈췄다 → 사각형으로.
+                self._item.setShapeMode(QGraphicsPixmapItem.ShapeMode.BoundingRectShape)
                 self._scene.setSceneRect(QRectF(pm.rect()))
         if self._item is None:
             self._scene.setSceneRect(QRectF(0, 0, 1, 1))
@@ -59,9 +68,16 @@ class ImageView(QGraphicsView):
 
     def fit(self):
         self._auto_fit = True
-        if self._item is not None:
+        if self._item is None or self._fitting:
+            return
+        self._fitting = True
+        try:
             self.resetTransform()
-            self.fitInView(self._item, Qt.AspectRatioMode.KeepAspectRatio)
+            # 아이템(외곽선 계산) 대신 이미지 사각형 기준으로 맞춘다
+            self.fitInView(self._item.sceneBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            self._last_fit_size = self.viewport().size()
+        finally:
+            self._fitting = False
 
     def actual_size(self):
         self._auto_fit = False
@@ -81,7 +97,7 @@ class ImageView(QGraphicsView):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if self._auto_fit:
+        if self._auto_fit and not self._fitting and self.viewport().size() != self._last_fit_size:
             self.fit()
 
     def drawForeground(self, painter, rect):

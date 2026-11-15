@@ -510,3 +510,41 @@ def test_watchdog_records_gui_stall(qapp, tmp_path):
     wd.stop()
     text = (tmp_path / "hang.log").read_text(encoding="utf-8")
     assert "응답하지 않음" in text and "test_watchdog_records_gui_stall" in text and "응답 회복" in text
+
+
+def test_image_view_fit_is_cheap_and_not_reentrant(qapp, tmp_path):
+    """v0.3.4: 투명 결과 이미지 맞춤에서 외곽선 계산·스크롤바 반복이 일어나지 않아야 한다."""
+    from PySide6.QtWidgets import QGraphicsPixmapItem
+    from crs.ui.image_view import ImageView
+    p = tmp_path / "t.png"
+    im = Image.new("RGBA", (300, 500), (0, 0, 0, 0))
+    for x in range(0, 300, 3):
+        for y in range(0, 500, 5):
+            im.putpixel((x, y), (255, 0, 0, 40))
+    im.save(p)
+    v = ImageView()
+    assert v.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert v.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    v.resize(400, 300)
+    v.show()
+    v.set_image(p)
+    qapp.processEvents()
+    assert v._item.shapeMode() == QGraphicsPixmapItem.ShapeMode.BoundingRectShape
+    calls = {"n": 0}
+    orig = v.fitInView
+
+    def counting(*a):
+        calls["n"] += 1
+        return orig(*a)
+
+    v.fitInView = counting
+    for _ in range(5):
+        v.resize(400, 300)          # 같은 크기 → 다시 맞추지 않음
+        qapp.processEvents()
+    assert calls["n"] == 0
+    v.resize(420, 320)
+    qapp.processEvents()
+    assert calls["n"] == 1
+    scale = v.transform().m11()
+    assert 0.5 < scale * 500 / v.viewport().height() < 1.01   # 세로가 화면에 맞음
+    v.close()
