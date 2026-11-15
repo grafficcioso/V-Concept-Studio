@@ -16,6 +16,7 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,7 +39,7 @@ jobs:
       - name: Tests (offscreen, mocked network, no API cost)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest tests -q
+        run: python -m pytest tests -q --timeout=150 --timeout-method=thread -p no:cacheprovider -o faulthandler_timeout=120
       - name: Build EXE
         run: python -m PyInstaller crs.spec --noconfirm --clean
       - name: Smoke test the EXE
@@ -55,6 +56,7 @@ jobs:
           Get-Content "$env:USERPROFILE\Documents\V-Concept Studio\logs\app.log" -ErrorAction SilentlyContinue
           Write-Host "EXE started and closed cleanly"
       - name: Claude Code connection (MCP server EXE, official client, demo mode)
+        timeout-minutes: 6
         run: python tools/smoke_mcp_exe.py
       - name: Post-update dialog closes without hanging (real Windows window)
         shell: pwsh
