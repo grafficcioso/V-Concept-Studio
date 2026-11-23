@@ -2,11 +2,12 @@
 import { db } from "./db.js";
 import { ApiError, editImage, listImageModels } from "./api.js";
 import { Catalog } from "./pricing.js";
-import { PaintLayer, decode, prepareForApi, saveOrShare, sizeOf, thumbnail } from "./images.js";
+import { PaintLayer, blankLike, copyCanvas, decode, isolatePart, layerHasMarks, overlayCanvas, prepareForApi, saveOrShare, sizeOf,
+  thumbnail, tintLayer } from "./images.js";
 import { composePrompt, joinPrompt, splitPrompt } from "./prompt.js";
 import { clearToken, hasValidToken, requestToken, summary as syncSummary, syncOnce } from "./sync.js";
 
-export const WEB_VERSION = "0.3.0";
+export const WEB_VERSION = "0.4.0";
 
 const FUNCTIONS = [
   { key: "front_view", label: "정면화", desc: "원화를 정면 머리 일러스트로 다시 그립니다." },
@@ -15,8 +16,13 @@ const FUNCTIONS = [
   { key: "iris_restore", label: "홍채 복원", desc: "눈·홍채를 크게 확대한 선명한 참조 이미지를 만듭니다." },
   { key: "upscale", label: "업스케일", desc: "디자인을 바꾸지 않고 선명하게 다시 그립니다." },
 ];
-const LABELS = { ...Object.fromEntries(FUNCTIONS.map((f) => [f.key, f.label])), retouch: "부분 수정" };
-const PROMPT_KEYS = [...FUNCTIONS.map((f) => f.key), "retouch"];
+// 파트 사면도 (웹 v0.4.0, PC 와 같은 기능 키·프롬프트)
+const PART_TYPES = [["part_views_hair", "헤어 (가발)"], ["part_views_head", "헤드 (민머리)"], ["part_views_accessory", "액세서리"],
+  ["part_views_other", "기타 파트"]];
+const SET_KEY = "set_head_hair";
+const LABELS = { ...Object.fromEntries(FUNCTIONS.map((f) => [f.key, f.label])), retouch: "부분 수정",
+  part_views_hair: "헤어 사면도", part_views_head: "헤드 사면도", part_views_accessory: "액세서리 사면도", part_views_other: "파트 사면도" };
+const PROMPT_KEYS = [...FUNCTIONS.map((f) => f.key), "retouch", ...PART_TYPES.map(([k]) => k)];
 const QUICK = [
   ["머리카락 가닥 줄이기", "Reduce the thin, scattered hair strands in this area; merge them into fewer, larger, clean hair clumps."],
   ["원화 느낌 더 살리기", "Make this area look closer to the original illustration's art style, linework, coloring, and shading."],
@@ -27,6 +33,8 @@ const QUICK = [
 ];
 const AREA_MARKUP = "A separate annotation layer marks the area to change with semi-transparent red paint. Apply the requested change only inside the red-marked area and blend it naturally with the surrounding image.";
 const AREA_WHOLE = "Apply the requested change to the whole image.";
+const PART_REF = (n) => `The ${n} image is the original full character illustration, given only as a reference for scale, proportions, and art style. Do not draw any other part from it.`;
+const HEAD_SHEET_REF = "The SECOND image is the four-view sheet of the bald head that this wig must fit. Use exactly the same view order, panel layout, panel positions, and head scale as that sheet, so each wig view can be laid directly over the matching head view: match the head width, skull height and shape, hairline, ear position, eye line, and jaw/chin line. Do not draw the face, skin, or head itself; draw only the wig where it would sit on that head.";
 const REF_ORIGINAL = "The SECOND image is the original source illustration of the same character. Use it as the reference for the character's original look, art style, linework, colors, and hair shapes.";
 
 const $ = (id) => document.getElementById(id);
@@ -196,7 +204,7 @@ async function rootOriginal(id) {
   return null;
 }
 
-async function confirmCost(fnLabel, nInputs) {
+async function confirmCost(fnLabel, nInputs, ask = true, note = "") {
   const s = settings(); const o = opts();
   if (s.demo) return true;
   const problems = state.catalog.validate(o.model, o.quality, o.size, o.background);
@@ -205,8 +213,8 @@ async function confirmCost(fnLabel, nInputs) {
   const est = state.catalog.estimate(o.model, o.quality, o.size, nInputs, usage);
   const month = usage.filter((u) => u.created >= monthStart() && u.status === "ok").reduce((a, u) => a + (u.cost || 0), 0);
   const over = s.budget > 0 && month + (est.high || 0) > s.budget;
-  if (!over && !s.confirm) return true;
-  let text = `[${fnLabel}] 요청을 OpenAI 로 보냅니다 (유료).\n모델 ${o.model} · 품질 ${o.quality} · 크기 ${o.size} · 배경 ${o.background}\n참조 이미지 ${nInputs}장\n\n${est.text}\n${est.note}`;
+  if (!over && (!ask || !s.confirm)) return true;
+  let text = `[${fnLabel}] 요청을 OpenAI 로 보냅니다 (유료).\n모델 ${o.model} · 품질 ${o.quality} · 크기 ${o.size} · 배경 ${o.background}\n참조 이미지 ${nInputs}장${note}\n\n${est.text}\n${est.note}`;
   if (s.budget > 0) text += `\n\n이번 달 앱 추정 사용액 $${month.toFixed(3)} / 소프트 예산 $${(+s.budget).toFixed(2)}` + (over ? "\n⚠ 예산을 넘습니다." : "");
   return modal("유료 생성 요청 확인", text, [["취소", false], ["생성", true]]);
 }
@@ -223,10 +231,11 @@ async function demoResult(blob) {
 
 /** 공통 생성 흐름. job: { fn, prompt, inputIds, markup, sourceId, extra } */
 async function runJob(job) {
-  if (state.busy) { toast("이미 생성 중입니다."); return; }
+  if (state.busy) { toast("이미 생성 중입니다."); return null; }
   const s = settings();
-  if (!s.demo && !apiKey()) { await modal("API 키 필요", "[설정]에서 OpenAI API 키를 먼저 넣어 주세요."); go("settings"); return; }
-  if (!(await confirmCost(LABELS[job.fn] || job.fn, job.inputIds.length))) return;
+  if (!s.demo && !apiKey()) { await modal("API 키 필요", "[설정]에서 OpenAI API 키를 먼저 넣어 주세요."); go("settings"); return null; }
+  if (!(await confirmCost(LABELS[job.fn] || job.fn, job.inputIds.length, !job.noConfirm, job.note || ""))) return null;
+  let outId = null;
   const o = opts();
   const ctrl = new AbortController(); state.busy = ctrl;
   setBusy(true, LABELS[job.fn]);
@@ -249,6 +258,7 @@ async function runJob(job) {
     await db.addUsage({ ...base, status: s.demo ? "demo" : "ok", cost, request_id: result.requestId, output_tokens: result.usage?.output_tokens ?? null,
       input_image_tokens: det.image_tokens ?? null, input_text_tokens: det.text_tokens ?? null,
       message: s.demo ? "데모" : result.usage ? null : "사용량 정보 없음" });
+    outId = id;
     await showResult(id);
     toast(`완료 (${Math.round(result.elapsed || 0)}초)`);
     scheduleSync();
@@ -261,10 +271,11 @@ async function runJob(job) {
     try { await wake?.release(); } catch { /* 무시 */ }
     updateEstimate(); refreshMoney();
   }
+  return outId;
 }
 
 function setBusy(on, label = "") {
-  $("genBtn").disabled = on; $("rtSend").disabled = on; $("progress").hidden = !on;
+  $("genBtn").disabled = on; $("rtSend").disabled = on; $("pvSend").disabled = on; $("progress").hidden = !on;
   clearInterval(setBusy._t);
   if (on) {
     const t0 = Date.now();
@@ -283,6 +294,7 @@ async function showResult(id) {
   state.resultId = id;
   $("resultCard").hidden = false;
   $("resultImg").src = objUrl(rec.blob);
+  $("resultCard").querySelector("[data-act=overlay]").hidden = !(rec.extra && rec.extra.head_sheet_id);
   $("resultMeta").textContent = `${LABELS[rec.function] || ""} · ${rec.model || ""} · ${rec.cost == null ? "비용 계산 불가" : "$" + rec.cost.toFixed(4)}${rec.favorite ? " · ★" : ""}`;
   $("resultCard").scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -303,6 +315,10 @@ async function act(action, id) {
     await setInput(id); $("detail").hidden = true; go("create"); toast("입력으로 지정했습니다.");
   } else if (action === "retouch") {
     $("detail").hidden = true; openRetouch(id);
+  } else if (action === "parts") {
+    $("detail").hidden = true; openPartViews(id);
+  } else if (action === "overlay") {
+    $("detail").hidden = true; openOverlay(id);
   } else if (action === "delete") {
     if (await modal("삭제", "이 이미지를 이 기기에서 삭제할까요?", [["취소", false], ["삭제", true, "danger"]])) {
       await db.deleteImage(id);
@@ -382,6 +398,142 @@ async function sendRetouch() {
   await runJob({ fn: "retouch", prompt, inputIds: orig ? [id, orig.id] : [id], markup: marks ? await paint.markupBlob() : null,
     sourceId: id, extra: { request } });
   if (state.resultId && (await db.getImage(state.resultId))?.sourceId === id) rtStates.delete(id);
+}
+
+// ------------------------------------------------------------------ 파트 사면도 (웹 v0.4.0)
+let pv = null;
+const pvStates = new Map();   // 이미지별 { type, layers:{head,hair}, overlay, cur, useOrig, head }
+const pvUi = { id: null, cur: null, layers: null };
+
+async function headSheets(id) {
+  const root = await rootOriginal(id);
+  const rows = (await db.listImages()).filter((r) => r.kind === "output" && r.function === "part_views_head");
+  let same = null;
+  for (const r of rows) { const o = await rootOriginal(r.id); if (!same && root && o && o.id === root.id) same = r.id; }
+  return { rows, same };
+}
+
+async function openPartViews(id) {
+  const rec = await db.getImage(id); if (!rec) return;
+  pvUi.id = id;
+  $("partviews").hidden = false;
+  pv = pv || new PaintLayer($("pvCanvas"));
+  const saved = pvStates.get(id);
+  await pv.load(rec.blob, saved && saved.overlay);
+  pv.brush = +$("pvSize").value; pv.ghost = null;
+  pvUi.layers = { head: saved && saved.layers ? copyCanvas(saved.layers.head) : blankLike(pv.layer),
+    hair: saved && saved.layers ? copyCanvas(saved.layers.hair) : blankLike(pv.layer) };
+  pvUi.cur = null;
+  const sel = $("pvType");
+  if (!sel.options.length) {
+    [...PART_TYPES, [SET_KEY, "헤드+헤어 세트 (2장, 크기 맞춤)"]].forEach(([k, l]) => { const o = document.createElement("option"); o.value = k; o.textContent = l; sel.appendChild(o); });
+  }
+  sel.value = (saved && saved.type) || "part_views_hair";
+  const { rows, same } = await headSheets(id);
+  const hs = $("pvHead"); hs.innerHTML = "";
+  [[ "", "(쓰지 않음)"], ...rows.map((r) => [String(r.id), `${r.name || "헤드 사면도"} ${r.created.slice(5, 16).replace("T", " ")}`])]
+    .forEach(([v, l]) => { const o = document.createElement("option"); o.value = v; o.textContent = l; hs.appendChild(o); });
+  hs.value = saved && saved.head != null ? saved.head : (same ? String(same) : "");
+  const orig = await rootOriginal(id);
+  $("pvUseOrig").disabled = !orig || orig.id === id;
+  $("pvUseOrig").checked = saved ? saved.useOrig && !$("pvUseOrig").disabled : !!orig && orig.id !== id;
+  if (sel.value === SET_KEY) { pvUi.cur = "head"; pvApplyLayer(); if (saved && saved.cur === "hair") pvSwitch("hair"); }
+  pvOnType();
+}
+
+function pvIsSet() { return $("pvType").value === SET_KEY; }
+function pvLayerOf(name) { return pvUi.cur === name ? pv.layer : pvUi.layers[name]; }
+function pvApplyLayer() {
+  const other = pvUi.cur === "head" ? "hair" : "head";
+  pv.layer = pvUi.layers[pvUi.cur]; pv.ghost = tintLayer(pvUi.layers[other]); pv.undo = []; pv.draw();
+  $("pvLayerHead").classList.toggle("on", pvUi.cur === "head"); $("pvLayerHair").classList.toggle("on", pvUi.cur === "hair");
+}
+function pvSwitch(name) {
+  if (!pvUi.cur || name === pvUi.cur) return;
+  pvUi.layers[pvUi.cur] = pv.layer; pvUi.cur = name; pvApplyLayer();
+}
+function pvOnType() {
+  const set = pvIsSet();
+  if (set && !pvUi.cur) { pvUi.layers.head = pv.layer; pvUi.cur = "head"; pvApplyLayer(); }
+  else if (!set && pvUi.cur) { pvUi.layers[pvUi.cur] = pv.layer; pvUi.cur = null; pv.ghost = null; pv.draw(); }
+  $("pvLayers").hidden = !set;
+  $("pvHeadBox").hidden = !($("pvType").value === "part_views_hair" && $("pvHead").options.length > 1);
+  $("pvSend").textContent = set ? "세트 생성 (유료 2장)" : "사면도 생성 (유료)";
+  $("pvInfo").textContent = set
+    ? "[헤드]로 민머리를, [헤어]로 가발을 칠하세요. 헤드 사면도를 먼저 만들고 그 결과에 크기를 맞춰 헤어 사면도를 이어서 만듭니다. 유료 2회 · 헤드가 실패하면 헤어는 보내지 않습니다."
+    : "돌릴 파트 하나를 넉넉하게 감싸도록 칠하세요. 칠한 부분만 잘라내고 나머지는 흰색으로 지운 뒤 보냅니다. 유료 생성 1회입니다.";
+}
+function keepPvState() {
+  if (!pv || !pvUi.id) return;
+  const layers = { head: copyCanvas(pvLayerOf("head")), hair: copyCanvas(pvLayerOf("hair")) };
+  pvStates.set(pvUi.id, { type: $("pvType").value, layers, overlay: copyCanvas(pv.layer), cur: pvUi.cur,
+    useOrig: $("pvUseOrig").checked, head: $("pvHead").value });
+}
+
+function partPrompt(key, hasOrig, headSheet) {
+  const refs = [];
+  if (headSheet) refs.push(HEAD_SHEET_REF);
+  if (hasOrig) refs.push(PART_REF(headSheet ? "THIRD" : "SECOND"));
+  const ref = refs.join(" ");
+  let [pos, neg] = splitPrompt(promptFor(key));
+  if (ref && !pos.includes("{reference_instruction}")) pos += "\n\n{reference_instruction}";
+  const filled = joinPrompt(pos, neg).replaceAll("{reference_instruction}", ref).split("\n")
+    .map((l) => (l.trim() ? l.replace(/[ \t]+/g, " ").trim() : "")).join("\n").trim();
+  return composePrompt(filled);
+}
+
+async function savePartInput(blob, fromId, label) {
+  return db.addImage({ kind: "part_input", blob, thumb: await thumbnail(blob), name: `${label} 파트`, sourceId: fromId });
+}
+
+async function runPart(key, partId, fromId, orig, headId, extra = {}, more = {}) {
+  const inputIds = [partId, ...(headId ? [headId] : []), ...(orig ? [orig.id] : [])];
+  return runJob({ fn: key, prompt: partPrompt(key, !!orig, !!headId), inputIds, sourceId: partId,
+    extra: { part_type: key, from_image_id: fromId, used_original_reference: !!orig, ...(headId ? { head_sheet_id: headId } : {}), ...extra }, ...more });
+}
+
+async function sendPartViews() {
+  const id = pvUi.id; const key = $("pvType").value; const set = key === SET_KEY;
+  if (set) {
+    const missing = [["head", "헤드"], ["hair", "헤어"]].filter(([k]) => !layerHasMarks(pvLayerOf(k))).map(([, n]) => n);
+    if (missing.length) { await modal("파트 사면도", `${missing.join("·")} 파트를 칠해 주세요. (위의 [헤드]/[헤어]를 바꿔 가며 둘 다 칠해야 합니다)`); return; }
+  } else if (!pv.hasMarks()) { await modal("파트 사면도", "돌릴 파트를 빨간 펜으로 칠해 주세요."); return; }
+  const orig = $("pvUseOrig").checked ? await rootOriginal(id) : null;
+  keepPvState();
+  $("partviews").hidden = true; go("create");
+  if (set) {
+    const headPart = await savePartInput(await isolatePart(pv.base, pvLayerOf("head")), id, "헤드 (민머리)");
+    const hairPart = await savePartInput(await isolatePart(pv.base, pvLayerOf("hair")), id, "헤어 (가발)");
+    const headOut = await runPart("part_views_head", headPart, id, orig, null, { set_step: 1, set_total: 2 },
+      { note: "\n헤드+헤어 세트: 이어서 헤어 사면도도 보냅니다 (총 2장, 비용 약 2배)" });
+    if (!headOut) { await db.deleteImage(headPart); await db.deleteImage(hairPart); toast("세트: 헤어는 보내지 않았습니다."); return; }
+    const hairOut = await runPart("part_views_hair", hairPart, id, orig, headOut, { set_step: 2, set_total: 2 }, { noConfirm: true });
+    if (!hairOut) await db.deleteImage(hairPart);
+    if (hairOut) pvStates.delete(id);
+    return;
+  }
+  const label = Object.fromEntries(PART_TYPES)[key];
+  const partId = await savePartInput(await isolatePart(pv.base, pv.layer), id, label);
+  const headId = key === "part_views_hair" && $("pvHead").value ? +$("pvHead").value : null;
+  const out = await runPart(key, partId, id, orig, headId);
+  if (out) pvStates.delete(id); else await db.deleteImage(partId);
+}
+
+// 정렬 가이드: 헤어 사면도를 기준 헤드 사면도와 겹쳐 보기
+async function openOverlay(id) {
+  const rec = await db.getImage(id);
+  const head = rec && rec.extra && rec.extra.head_sheet_id ? await db.getImage(rec.extra.head_sheet_id) : null;
+  if (!head) { await modal("헤드와 겹쳐 보기", "이 결과는 헤드 사면도를 기준으로 만든 헤어 사면도가 아닙니다."); return; }
+  state.overlay = { below: head.blob, above: rec.blob };
+  $("overlay").hidden = false;
+  await renderOverlay();
+}
+async function renderOverlay() {
+  if (!state.overlay) return;
+  const a = +$("ovAlpha").value / 100;
+  $("ovLabel").textContent = `헤어 ${Math.round(a * 100)}%`;
+  const c = await overlayCanvas(state.overlay.below, state.overlay.above, a);
+  const v = $("ovCanvas"); v.width = c.width; v.height = c.height; v.getContext("2d").drawImage(c, 0, 0);
 }
 
 function showPrompt(k) { const [p, n] = splitPrompt(promptFor(k)); $("promptText").value = p; $("promptNeg").value = n; }
@@ -499,6 +651,7 @@ function bindEvents() {
   document.querySelectorAll("#detail [data-dact]").forEach((b) => b.addEventListener("click", () => act(b.dataset.dact, state.detailId)));
   document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => {
     if (b.closest("#retouch")) keepRetouchState();
+    if (b.closest("#partviews")) keepPvState();
     b.closest(".sheet").hidden = true;
   }));
   document.querySelectorAll("#histFilter button").forEach((b) => b.addEventListener("click", () => {
@@ -511,6 +664,16 @@ function bindEvents() {
   $("rtUndo").onclick = () => paint.undoLast();
   $("rtClear").onclick = () => paint.clear();
   $("rtSend").onclick = sendRetouch;
+  // 파트 사면도
+  $("pvSize").oninput = () => { if (pv) pv.brush = +$("pvSize").value; };
+  $("pvEraser").onclick = () => { pv.eraser = !pv.eraser; $("pvEraser").classList.toggle("on", pv.eraser); };
+  $("pvUndo").onclick = () => pv.undoLast();
+  $("pvClear").onclick = () => pv.clear();
+  $("pvType").onchange = pvOnType;
+  $("pvLayerHead").onclick = () => pvSwitch("head");
+  $("pvLayerHair").onclick = () => pvSwitch("hair");
+  $("pvSend").onclick = sendPartViews;
+  $("ovAlpha").oninput = renderOverlay;
   // 설정
   $("keySave").onclick = () => {
     const v = $("keyInput").value.trim();

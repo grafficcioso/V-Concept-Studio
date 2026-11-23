@@ -69,6 +69,7 @@ export class PaintLayer {
     this.undo = [];
     this.base = null;
     this.layer = null;
+    this.ghost = null;
     this.last = null;
     this._bind();
   }
@@ -90,6 +91,7 @@ export class PaintLayer {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(this.base, 0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 0.45;
+    if (this.ghost) ctx.drawImage(this.ghost, 0, 0);   // 세트 모드: 지금 안 칠하는 파트 (파랑)
     ctx.drawImage(this.layer, 0, 0);
     ctx.globalAlpha = 1;
   }
@@ -167,6 +169,62 @@ export class PaintLayer {
     g.drawImage(this.layer, 0, 0);
     return toBlob(out, "image/png");
   }
+}
+
+// ------------------------------------------------------------------ 파트 사면도 (웹 v0.4.0)
+export function blankLike(c) { return canvasOf(c.width, c.height); }
+
+export function copyCanvas(c) { const o = canvasOf(c.width, c.height); o.getContext("2d").drawImage(c, 0, 0); return o; }
+
+/** 칠한 레이어를 다른 색(기본 파랑)으로 바꾼 사본 — 세트 모드에서 다른 파트를 보여 줄 때 */
+export function tintLayer(layer, color = "#286eff") {
+  const o = copyCanvas(layer); const g = o.getContext("2d");
+  g.globalCompositeOperation = "source-in"; g.fillStyle = color; g.fillRect(0, 0, o.width, o.height);
+  return o;
+}
+
+export function layerHasMarks(layer) {
+  const d = layer.getContext("2d").getImageData(0, 0, layer.width, layer.height).data;
+  for (let i = 3; i < d.length; i += 16) if (d[i] > 0) return true;
+  return false;
+}
+
+/** PC 의 isolate_part 와 같은 규칙: 칠한 영역(조금 넓힘)만 남기고 나머지는 흰색, 그 영역에 맞게 잘라 여백을 붙인다.
+ *  base: ImageBitmap, layer: base 를 fitSize 로 줄인 크기의 캔버스. 반환: PNG Blob (칠한 곳이 없으면 null) */
+export async function isolatePart(base, layer, padRatio = 0.08) {
+  const w = layer.width, h = layer.height;
+  const grow = Math.max(2, Math.floor(Math.min(w, h) / 300));
+  const mask = canvasOf(w, h); const mg = mask.getContext("2d", { willReadFrequently: true });
+  for (let dy = -grow; dy <= grow; dy += Math.max(1, grow / 2))
+    for (let dx = -grow; dx <= grow; dx += Math.max(1, grow / 2)) mg.drawImage(layer, dx, dy);
+  const a = mg.getImageData(0, 0, w, h).data;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (a[(y * w + x) * 4 + 3] > 0) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) return null;
+  mg.globalCompositeOperation = "source-in"; mg.fillStyle = "#000"; mg.fillRect(0, 0, w, h);   // 알파를 꽉 채운 마스크
+  const kept = canvasOf(w, h); const kg = kept.getContext("2d");
+  kg.drawImage(base, 0, 0, w, h);
+  kg.globalCompositeOperation = "destination-in"; kg.drawImage(mask, 0, 0);
+  kg.globalCompositeOperation = "destination-over"; kg.fillStyle = "#fff"; kg.fillRect(0, 0, w, h);
+  const cw = x1 - x0 + 1, ch = y1 - y0 + 1, pad = Math.floor(Math.max(cw, ch) * padRatio) + 8;
+  const out = canvasOf(cw + 2 * pad, ch + 2 * pad); const og = out.getContext("2d");
+  og.fillStyle = "#fff"; og.fillRect(0, 0, out.width, out.height);
+  og.drawImage(kept, x0, y0, cw, ch, pad, pad, cw, ch);
+  return toBlob(out, "image/png");
+}
+
+/** 정렬 가이드: 아래(헤드)와 위(헤어)를 같은 폭으로 맞춰 alpha 비율로 겹친 캔버스 */
+export async function overlayCanvas(belowBlob, aboveBlob, alpha, maxSide = 1600) {
+  const a = await decode(belowBlob), b = await decode(aboveBlob);
+  const [w, h] = fitSize(a.width, a.height, maxSide);
+  const c = canvasOf(w, h); const g = c.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
+  g.globalAlpha = 1 - alpha; g.drawImage(a, 0, 0, w, h);
+  g.globalAlpha = alpha; g.drawImage(b, 0, 0, w, Math.round(b.height * w / b.width));
+  g.globalAlpha = 1;
+  return c;
 }
 
 export async function saveOrShare(blob, filename) {

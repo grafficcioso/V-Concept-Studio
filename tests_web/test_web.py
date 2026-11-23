@@ -421,3 +421,83 @@ def test_send_originals_to_pc(browser, site, tmp_path, monkeypatch):
         pc.close()
     finally:
         drive.stop()
+
+
+# ---- 웹 v0.4.0: 파트 사면도 + 헤드+헤어 세트 + 겹쳐 보기 ----
+def _paint(pg, sel, fx0, fy0, fx1, fy1):
+    box = pg.locator(sel).bounding_box()
+    pg.mouse.move(box["x"] + box["width"] * fx0, box["y"] + box["height"] * fy0)
+    pg.mouse.down()
+    pg.mouse.move(box["x"] + box["width"] * fx1, box["y"] + box["height"] * fy1, steps=8)
+    pg.mouse.up()
+
+
+def _prompt(parts):
+    return {k: v.decode() for k, f, v in parts if not f}["prompt"]
+
+
+def test_part_views_head_hair_set(page, tmp_path):
+    pg = page
+    SHOTS.mkdir(parents=True, exist_ok=True)
+    set_key(pg)
+    pick_image(pg, tmp_path)
+    pg.click("#fnChips [data-fn=parts_separation]")
+    pg.click("#genBtn")
+    confirm(pg)
+    pg.wait_for_selector("#resultCard:not([hidden])")
+    assert pg.is_hidden("#resultCard [data-act=overlay]")
+    pg.click("#resultCard [data-act=parts]")
+    pg.wait_for_selector("#partviews:not([hidden])")
+    pg.select_option("#pvType", "set_head_hair")
+    assert pg.is_visible("#pvLayers")
+    _paint(pg, "#pvCanvas", 0.6, 0.3, 0.8, 0.7)      # 헤드 (빨강)
+    pg.click("#pvLayerHair")
+    _paint(pg, "#pvCanvas", 0.15, 0.3, 0.35, 0.7)    # 헤어
+    pg.screenshot(path=str(SHOTS / "partviews_set.png"))
+    n = len(pg.api.requests)
+    pg.click("#pvSend")
+    confirm(pg)
+    pg.wait_for_function("document.querySelector('#resultMeta').textContent.includes('헤어 사면도')", timeout=20000)
+    assert len(pg.api.requests) - n == 2                  # 두 번째는 확인 창 없이 이어서
+    head_req, hair_req = (parse_multipart(r) for r in pg.api.requests[-2:])
+    hp, rp = _prompt(head_req), _prompt(hair_req)
+    assert "bald head" in hp and "SECOND image is the original" in hp
+    assert "four-view sheet of the bald head that this wig must fit" in rp and "THIRD image is the original" in rp
+    assert "{" not in rp
+    imgs = [v for k, f, v in hair_req if k == "image[]"]
+    assert len(imgs) == 3
+    part = Image.open(io.BytesIO(imgs[0])).convert("RGB")
+    cols = {c for _, c in part.getcolors(1 << 20)}
+    assert (255, 255, 255) in cols and any(g > 150 and r < 80 for r, g, b in cols)   # 칠한 초록 + 흰 배경
+    pg.wait_for_selector("#resultCard [data-act=overlay]:not([hidden])")
+    pg.click("#resultCard [data-act=overlay]")
+    pg.wait_for_selector("#overlay:not([hidden])")
+    pg.wait_for_function("document.querySelector('#ovLabel').textContent.includes('50%')")
+    pg.screenshot(path=str(SHOTS / "overlay.png"))
+    pg.click("#overlay [data-close]")
+    pg.click(".tabbar [data-go=history]")
+    pg.wait_for_selector("#histGrid .thumb")
+    assert pg.locator("#histGrid .thumb").count() == 3     # 잘라낸 파트 입력은 기록에 안 나옴
+
+
+def test_part_views_single_needs_paint(page, tmp_path):
+    pg = page
+    set_key(pg)
+    pick_image(pg, tmp_path)
+    pg.click("#genBtn")
+    confirm(pg)
+    pg.wait_for_selector("#resultCard:not([hidden])")
+    pg.click("#resultCard [data-act=parts]")
+    pg.wait_for_selector("#partviews:not([hidden])")
+    n = len(pg.api.requests)
+    pg.click("#pvSend")
+    pg.wait_for_selector("#modal:not([hidden])")
+    assert "칠해 주세요" in pg.text_content("#modalText")
+    pg.click("#modalBtns button")
+    pg.select_option("#pvType", "part_views_accessory")
+    _paint(pg, "#pvCanvas", 0.3, 0.3, 0.6, 0.6)
+    pg.click("#pvSend")
+    confirm(pg)
+    pg.wait_for_function("document.querySelector('#resultMeta').textContent.includes('액세서리 사면도')")
+    assert len(pg.api.requests) - n == 1
+    assert "accessory" in _prompt(parse_multipart(pg.api.requests[-1])).lower()

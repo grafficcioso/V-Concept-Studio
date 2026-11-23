@@ -176,6 +176,29 @@ class Workspace:
         self.write_project_json(project_id)
         return iid
 
+    def import_pin(self, project_id, pin, image_bytes: bytes, source_url: str, board: str) -> int:
+        """v0.6.0: 핀터레스트 핀을 원본으로 가져온다. '외부 출처' 태그 + 출처 메모, 다시 가져오지 않게 기록."""
+        from .pinterest import EXTERNAL_NOTE, EXTERNAL_TAG
+        import io
+        with Image.open(io.BytesIO(image_bytes)) as im:
+            im.verify()
+            fmt = (im.format or "").upper()
+        ext = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}.get(fmt)
+        if not ext:
+            raise ValueError(f"지원하지 않는 이미지 형식입니다: {fmt or '알 수 없음'}")
+        folder = self.project_dir(project_id) / "originals"
+        dst = unique_path(folder, f"pin_{safe_name(pin.pin_id, 'pin')[:40]}", ext)
+        dst.write_bytes(image_bytes)
+        thumb = self.project_dir(project_id) / "thumbs" / (dst.stem + "_o.png")
+        self._thumb(dst, thumb)
+        name = (pin.title or f"핀 {pin.pin_id}")[:60]
+        iid = self.db.add_image(project_id=project_id, kind="original", rel_path=self.paths.rel(dst),
+                                thumb_path=self.paths.rel(thumb), name=name, tags=f"{EXTERNAL_TAG}, pinterest",
+                                note=EXTERNAL_NOTE.format(link=pin.link))
+        self.db.add_pinterest_pin(pin.pin_id, board, iid, source_url)
+        self.write_project_json(project_id)
+        return iid
+
     def save_output(self, project_id, image_bytes: bytes, *, function, source_image_id, prompt, preset_id,
                     preset_name, model, quality, size, background, params: dict, request_id, usage,
                     est_cost_usd) -> int:

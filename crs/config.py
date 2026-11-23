@@ -32,6 +32,8 @@ DEFAULTS = {
     "sync_auto": True,               # 시작할 때·생성 후 자동 동기화
     "sync_folder_id": "",
     "last_sync": "",
+    "pinterest_boards": [],          # v0.6.0 등록한 핀터레스트 공개 보드 주소
+    "pinterest_last_board": "",
     "mcp_enabled": False,            # Claude Code 연결(MCP 모드) 허용
     "mcp_max_images_per_call": 6,    # MCP 요청 1번에 만들 수 있는 최대 장수
     "mcp_daily_budget_usd": 2.0,     # MCP 로 하루에 쓸 수 있는 추정 금액 상한 (0 = MCP 생성 금지)

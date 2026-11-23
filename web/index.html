@@ -88,6 +88,8 @@
         <button class="btn" data-act="fav">★ 즐겨찾기</button>
         <button class="btn" data-act="use">입력으로 사용</button>
         <button class="btn" data-act="retouch">✎ 부분 수정</button>
+        <button class="btn" data-act="parts">◧ 파트 사면도</button>
+        <button class="btn" data-act="overlay" hidden>⧉ 헤드와 겹쳐 보기</button>
       </div>
     </div>
   </section>
@@ -194,6 +196,7 @@
       <button class="btn" data-dact="fav">★ 즐겨찾기</button>
       <button class="btn" data-dact="use">입력으로 사용</button>
       <button class="btn" data-dact="retouch">✎ 부분 수정</button>
+      <button class="btn" data-dact="parts">◧ 파트 사면도</button>
       <button class="btn primary" data-dact="meta">이름·태그 저장</button>
       <button class="btn danger" data-dact="delete">삭제</button>
     </div>
@@ -216,6 +219,41 @@
     <label class="check"><input type="checkbox" id="rtUseOrig" checked> 원본 원화를 참조로 함께 보내기</label>
     <div class="muted small">칠한 영역은 '안내'로 쓰여 경계가 정확히 지켜지지 않을 수 있습니다. 칠하지 않으면 전체 수정입니다. 유료 생성 1회입니다.</div>
     <button class="btn primary big-btn" id="rtSend">수정 요청 보내기</button>
+  </div>
+</div>
+
+<!-- ============ 파트 사면도 (웹 v0.4.0) ============ -->
+<div class="sheet" id="partviews" hidden>
+  <div class="sheet-head"><button class="btn" data-close>닫기</button><span>파트 사면도 — 돌릴 파트를 칠하세요</span></div>
+  <div class="sheet-body">
+    <label class="field">파트 종류<select id="pvType"></select></label>
+    <div class="row" id="pvLayers" hidden>
+      <span class="small">칠하는 파트 (다른 쪽은 파랑):</span>
+      <button class="btn small on" id="pvLayerHead">헤드</button>
+      <button class="btn small" id="pvLayerHair">헤어</button>
+    </div>
+    <div class="canvas-wrap"><canvas id="pvCanvas"></canvas></div>
+    <div class="row">
+      <label class="grow small">굵기 <input type="range" id="pvSize" min="4" max="160" value="40"></label>
+      <button class="btn small" id="pvEraser">지우개</button>
+      <button class="btn small" id="pvUndo">되돌리기</button>
+      <button class="btn small" id="pvClear">모두 지우기</button>
+    </div>
+    <label class="field" id="pvHeadBox" hidden>크기 기준 헤드 사면도 (이 헤드에 맞춰 헤어를 그림)<select id="pvHead"></select></label>
+    <label class="check"><input type="checkbox" id="pvUseOrig" checked> 원본 원화를 참조로 함께 보내기 (크기·형태·화풍)</label>
+    <div class="muted small" id="pvInfo"></div>
+    <button class="btn primary big-btn" id="pvSend">사면도 생성 (유료)</button>
+  </div>
+</div>
+
+<!-- ============ 헤드와 겹쳐 보기 ============ -->
+<div class="sheet" id="overlay" hidden>
+  <div class="sheet-head"><button class="btn" data-close>닫기</button><span>헤드와 겹쳐 보기</span></div>
+  <div class="sheet-body">
+    <div class="canvas-wrap"><canvas id="ovCanvas"></canvas></div>
+    <div class="row"><span class="small">헤드</span><input class="grow" type="range" id="ovAlpha" min="0" max="100" value="50"><span class="small">헤어</span></div>
+    <div class="small" id="ovLabel"></div>
+    <div class="muted small">머리 크기·눈선·턱선이 맞는지 보세요. 두 장의 폭을 맞춰 겹칩니다.</div>
   </div>
 </div>
 

@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS styles(
   id INTEGER PRIMARY KEY, name TEXT NOT NULL, prompt TEXT NOT NULL, summary TEXT DEFAULT '',
   source_image_id INTEGER REFERENCES images(id) ON DELETE SET NULL, model TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pinterest_pins(
+  pin_id TEXT PRIMARY KEY, board TEXT, image_id INTEGER, source_url TEXT, imported_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sync_tombstones(
   uid TEXT PRIMARY KEY, drive_id TEXT, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_images_project ON images(project_id, kind);
@@ -195,6 +197,15 @@ class Database:
 
     def drop_tombstone(self, uid):
         self.conn.execute("DELETE FROM sync_tombstones WHERE uid=?", (uid,))
+        self.conn.commit()
+
+    # ---- 핀터레스트 (v0.6.0): 이미 가져온 핀은 다시 가져오지 않는다 ----
+    def pinterest_seen(self) -> dict[str, int | None]:
+        return {r["pin_id"]: r["image_id"] for r in self._all("SELECT pin_id, image_id FROM pinterest_pins")}
+
+    def add_pinterest_pin(self, pin_id, board, image_id, source_url):
+        self.conn.execute("INSERT OR REPLACE INTO pinterest_pins(pin_id, board, image_id, source_url, imported_at) "
+                          "VALUES(?,?,?,?,?)", (pin_id, board, image_id, source_url, now_iso()))
         self.conn.commit()
 
     def get_project_by_name(self, name):

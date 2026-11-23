@@ -38,7 +38,10 @@ INSTRUCTIONS = (
     "- generate 의 steps 는 순서대로 이어서 실행됩니다. 예: ['front_view','four_views'] = 정면화 결과로 사면도.\n"
     "- 생성은 유료입니다. 사용자가 시킨 만큼만 만들고, 같은 요청을 반복하지 마세요. 거절되면 사용자에게 이유를 전하세요.\n"
     "- 한 장에 30초~2분 걸립니다. wait_sec 안에 안 끝나면 job_status 로 확인하세요.\n"
-    "- 결과 파일 이름을 정리할 때는 원본을 옮기지 말고 export_images 로 원하는 폴더에 원하는 이름으로 복사하세요."
+    "- 결과 파일 이름을 정리할 때는 원본을 옮기지 말고 export_images 로 원하는 폴더에 원하는 이름으로 복사하세요.\n"
+    "- 핀터레스트: pinterest_list 로 공개 보드의 최근 핀을 보고, pinterest_import 는 먼저 confirm 없이 불러 "
+    "장수·예상 비용을 사용자에게 보여 준 뒤 OK 를 받으면 confirm=true 로 다시 부르세요. 가져온 이미지는 '외부 출처' — "
+    "공부·참고용이며 판매·커미션·게시용으로 쓰지 않습니다."
 )
 
 
@@ -96,6 +99,21 @@ TOOLS = [
                              "items": {"type": "array", "items": _schema(
                                  {"id": {"type": "integer"}, "filename": {"type": "string"}}, ["id", "filename"])},
                              "overwrite": {"type": "boolean"}}, ["dest_folder", "items"])},
+    {"name": "pinterest_list", "description": (
+        "핀터레스트 공개 보드의 최근 핀(약 25개) 목록: pin_id, 날짜, 제목, 이미 가져왔는지. 무료(생성 없음). "
+        "board 는 보드 주소 또는 '사용자/보드'. 비우면 프로그램에 마지막으로 쓴 보드."),
+     "inputSchema": _schema({"board": {"type": "string"},
+                             "since": {"type": "string", "description": "이 날짜(YYYY-MM-DD) 이후 핀만"}})},
+    {"name": "pinterest_import", "description": (
+        "핀터레스트 핀을 원본으로 가져오고(이미 가져온 핀은 건너뜀) 원하면 steps 를 이어서 생성합니다. "
+        "confirm 이 false(기본)면 아무것도 하지 않고 장수·예상 비용만 돌려줍니다 → 사용자에게 보여 주고 OK 받은 뒤 confirm=true. "
+        "생성 장수·하루 상한은 generate 와 같습니다."),
+     "inputSchema": _schema({
+         "board": {"type": "string"}, "pin_ids": {"type": "array", "items": {"type": "string"}},
+         "since": {"type": "string", "description": "pin_ids 대신: 이 날짜(YYYY-MM-DD) 이후 핀 전부"},
+         "project": {"type": "string", "description": "넣을 프로젝트 (기본 '핀터레스트')"},
+         "steps": {"type": "array", "items": {"type": "string", "enum": list(PIPELINE_FUNCTIONS)}},
+         "confirm": {"type": "boolean"}, "wait_sec": {"type": "integer", "minimum": 0, "maximum": 1200}})},
     {"name": "sync_now", "description": "구글 드라이브와 지금 동기화 (폰에서 보낸 원본 받기 + 결과 올리기).",
      "inputSchema": _schema({})},
 ]
@@ -518,6 +536,84 @@ class Server:
             finally:
                 w.db.close()
         threading.Thread(target=run, name="mcp-sync", daemon=True).start()
+
+    # ---- 핀터레스트 (v0.6.0) -------------------------------------------------
+    pinterest_get = None    # 테스트에서 가짜 네트워크로 바꿈
+
+    def _pins(self, board, since):
+        from . import pinterest as pt
+        board = (board or self.ws.settings.get("pinterest_last_board") or "").strip()
+        if not board:
+            raise ToolError("board 를 넣어 주세요 (예: https://www.pinterest.com/사용자이름/보드이름/).")
+        try:
+            pins = pt.fetch_board(board, get=self.pinterest_get or pt.http_get)
+            return board, pt.filter_since(pins, pt.parse_since(since))
+        except pt.PinterestError as e:
+            raise ToolError(str(e)) from e
+
+    def tool_pinterest_list(self, board=None, since=None):
+        board, pins = self._pins(board, since)
+        seen = self.ws.db.pinterest_seen()
+        return {"board": board, "count": len(pins), "pins": [
+            {"pin_id": p.pin_id, "date": p.date_text, "title": p.title[:80], "link": p.link,
+             "imported_image_id": seen.get(p.pin_id)} for p in pins],
+            "note": "RSS 의 최근 핀만 보입니다. 날짜는 핀 날짜(보드에 추가한 날짜와 다를 수 있음)."}
+
+    def tool_pinterest_import(self, board=None, pin_ids=None, since=None, project=None, steps=None, confirm=False,
+                              wait_sec=120):
+        from . import pinterest as pt
+        steps = list(steps or [])
+        bad = [x for x in steps if x not in PIPELINE_FUNCTIONS]
+        if bad:
+            raise ToolError(f"steps 에 쓸 수 있는 기능: {', '.join(PIPELINE_FUNCTIONS)}")
+        if not pin_ids and not since:
+            raise ToolError("pin_ids 또는 since 중 하나를 넣어 주세요.")
+        board, pins = self._pins(board, since)
+        if pin_ids:
+            want = set(pin_ids)
+            pins = [p for p in pins if p.pin_id in want]
+        seen = self.ws.db.pinterest_seen()
+        skipped = [p.pin_id for p in pins if p.pin_id in seen]
+        pins = [p for p in pins if p.pin_id not in seen]
+        s = self.ws.settings
+        total = len(pins) * len(steps)
+        model = self._default_model()
+        q, z = s.get("last_quality") or "auto", s.get("last_size") or "auto"
+        cost = 0.0 if self.ws.demo_mode else sum(self._estimate(model, q, z, f) for f in steps) * len(pins)
+        preview = {"board": board, "new_pins": len(pins), "already_imported": skipped, "steps": steps,
+                   "generate_images": total, "estimated_cost_usd": round(cost, 2),
+                   "limit_per_call": int(s.get("mcp_max_images_per_call") or 0),
+                   "daily_budget_usd": float(s.get("mcp_daily_budget_usd") or 0),
+                   "spent_today_usd": round(self._mcp_spent_today(), 2)}
+        if not confirm:
+            preview["hint"] = ("아직 아무것도 하지 않았습니다. 이 장수·예상 비용을 사용자에게 보여 주고, "
+                               "OK 를 받으면 같은 값에 confirm=true 를 붙여 다시 부르세요.")
+            if total > preview["limit_per_call"]:
+                preview["warning"] = "생성 장수가 1번 최대 장수를 넘어 생성은 거절됩니다. 나눠서 요청하세요."
+            return preview
+        if not pins:
+            return {**preview, "imported_ids": [], "message": "새로 가져올 핀이 없습니다."}
+        if steps and total > preview["limit_per_call"]:
+            raise ToolError(f"생성 {total}장은 1번 최대 장수 {preview['limit_per_call']}장을 넘습니다. 핀을 나눠서 요청하세요.")
+        pid = self._project_id(project or "핀터레스트")
+        get = self.pinterest_get or pt.http_get
+        ids, errors = [], []
+        key = pt.board_key(board)
+        for p in pins:
+            try:
+                data, url = pt.download_image(p, get=get)
+                ids.append(self.ws.import_pin(pid, p, data, url, key))
+            except Exception as e:
+                errors.append(f"{p.pin_id}: {e}")
+        out = {"imported_ids": ids, "errors": errors, "already_imported": skipped,
+               "note": "가져온 이미지는 '외부 출처' 태그 — 공부·참고용, 판매·커미션·게시 금지."}
+        if not steps or not ids:
+            return out
+        try:
+            report = self.tool_generate(ids, steps, project=project or "핀터레스트", wait_sec=wait_sec)
+        except ToolError as e:   # 가져오기는 끝났고 생성만 거절됨
+            return {**out, "generate_error": str(e)}
+        return Content([_text(out)] + list(report))
 
     def tool_sync_now(self):
         st = self._sync()

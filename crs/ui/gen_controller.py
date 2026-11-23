@@ -56,7 +56,8 @@ class GenerationController(QObject):
         return self.worker is not None
 
     # ---- 시작 -----------------------------------------------------------
-    def start(self, job: GenJob, parent_widget) -> bool:
+    def start(self, job: GenJob, parent_widget, ask: bool = True) -> bool:
+        """ask=False: 이어서 보내는 요청(세트 2/2 등) — 예산을 넘을 때만 확인 창을 띄운다."""
         ws = self.ws
         if self.is_busy():
             QMessageBox.information(parent_widget, "생성 중", "이미 진행 중인 요청이 있습니다. 끝난 뒤 다시 시도하세요.")
@@ -86,7 +87,7 @@ class GenerationController(QObject):
                                 f"생성 화면에서 모델을 바꿔 주세요. 지원 모델: {ok_models}\n\n"
                                 "또는 칠한 영역을 모두 지우면 이미지 전체에 대한 수정 요청으로 보낼 수 있습니다.")
             return False
-        if not self._confirm(job, parent_widget):
+        if not self._confirm(job, parent_widget, ask):
             return False
 
         self.job = job
@@ -103,7 +104,7 @@ class GenerationController(QObject):
         self.started.emit(job)
         return True
 
-    def _confirm(self, job: GenJob, parent_widget) -> bool:
+    def _confirm(self, job: GenJob, parent_widget, ask: bool = True) -> bool:
         ws = self.ws
         if ws.demo_mode:
             return True
@@ -121,14 +122,17 @@ class GenerationController(QObject):
                 budget_text += "\n⚠ 앱 내부 월간 소프트 예산을 넘습니다."
             if month["unknown"]:
                 budget_text += f"\n(과금 여부 불명 요청 {month['unknown']}건은 합계에 포함되지 않았습니다.)"
-        if not over and not ws.settings.get("confirm_before_request"):
+        if not over and (not ask or not ws.settings.get("confirm_before_request")):
             return True
         box = QMessageBox(parent_widget)
         box.setIcon(QMessageBox.Icon.Warning if over else QMessageBox.Icon.Question)
         box.setWindowTitle("유료 생성 요청 확인")
+        n_total = int(job.extra_params.get("set_total") or 1)
+        set_text = (f"\n\n헤드+헤어 세트: 이 요청이 끝나면 헤어 사면도를 이어서 보냅니다 (총 {n_total}장, 비용 약 {n_total}배)."
+                    if n_total > 1 else "")
         box.setText(f"[{label_of(job.function)}] 요청을 OpenAI API로 보냅니다. (유료)\n\n"
                     f"모델: {job.model}\n품질: {job.quality} · 크기: {job.size} · 배경: {job.background}\n"
-                    f"참조 이미지: {len(job.input_paths)}장" + (" · 빨간 펜 영역 지정 있음" if job.markup_path else ""))
+                    f"참조 이미지: {len(job.input_paths)}장" + (" · 빨간 펜 영역 지정 있음" if job.markup_path else "") + set_text)
         box.setInformativeText(est.text() + budget_text +
                                "\n\n예산은 이 앱의 로컬 추정치에 근거한 소프트 제한이며, OpenAI 계정의 청구를 차단하지 않습니다.")
         go = box.addButton("생성", QMessageBox.ButtonRole.AcceptRole)

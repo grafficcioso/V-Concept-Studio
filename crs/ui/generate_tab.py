@@ -42,6 +42,8 @@ class GenerateTab(QWidget):
         self._retouch_states: dict[int, dict] = {}
         self._pending_retouch: tuple[int, dict] | None = None
         self._part_states: dict[int, dict] = {}
+        self._pending_set: dict | None = None   # v0.6.0 헤드+헤어 세트 2단계 대기
+        self._batch: dict | None = None         # v0.6.0 일괄 생성 (핀터레스트 가져오기 후)
         self._started_at = 0.0
         self._loading = False
         self.style_ctl = StyleController(ws, self)
@@ -75,7 +77,7 @@ class GenerateTab(QWidget):
         self.project_combo.currentIndexChanged.connect(self._on_project_combo)
         top.addWidget(self.project_combo)
         for text, fn in (("새 프로젝트", self.new_project), ("원본 열기", self.open_files),
-                         ("클립보드 붙여넣기 (Ctrl+V)", self.paste)):
+                         ("클립보드 붙여넣기 (Ctrl+V)", self.paste), ("핀터레스트…", self.open_pinterest)):
             b = QPushButton(text)
             b.clicked.connect(fn)
             top.addWidget(b)
@@ -712,6 +714,18 @@ class GenerateTab(QWidget):
         if job.function.startswith("part_views_"):
             self._part_states.pop(job.extra_params.get("from_image_id"), None)
         self._pending_retouch = None
+        if job.extra_params.get("batch") and self._batch:                  # v0.6.0 일괄 생성: 다음 단계
+            if job.project_id == self.project_id:
+                self.reload_lists()
+                self.show_result(image_id)
+            self._batch_next(image_id)
+            return
+        if job.extra_params.get("set_step") == 1 and self._pending_set:   # v0.6.0 세트: 헤어 이어서
+            if job.project_id == self.project_id:
+                self.reload_lists()
+            self.progress_label.setText('세트 1/2 완료 — 헤어 사면도를 이어서 보냅니다…')
+            self._continue_set_later(image_id, job)
+            return
         self.progress_label.setText(f"완료 ({int(time.monotonic() - self._started_at)}초)")
         if job.project_id == self.project_id:
             self.result_id = image_id
@@ -721,6 +735,13 @@ class GenerateTab(QWidget):
 
     def _on_failed(self, message, job):
         self._stop_progress()
+        if self._batch and job.extra_params.get("batch"):   # 일괄 생성은 실패하면 멈춘다 (자동 재시도 없음)
+            b, self._batch = self._batch, None
+            message += f"\n\n(일괄 생성: {b['done']}/{b['total']}장 완료 후 멈췄습니다. 남은 것은 보내지 않았습니다.)"
+        if self._pending_set and job.extra_params.get("set_step") == 1:  # 헤드 실패 → 헤어는 보내지 않음
+            self.ws.delete_image(self._pending_set["hair_part_id"])
+            self._pending_set = None
+            message += "\n\n(헤드+헤어 세트: 헤드가 실패해서 헤어는 보내지 않았습니다.)"
         self._pending_retouch = None  # 칠한 내용은 _retouch_states 에 남아 있어 다시 열면 복원된다
         self.progress_label.setText("실패 — 자동 재시도하지 않습니다.")
         QMessageBox.warning(self, "생성 실패", message)
@@ -865,7 +886,8 @@ class GenerateTab(QWidget):
         for text, fn in (("복사", self.copy_result), ("PNG로 저장…", self.save_result_as),
                          ("★ 즐겨찾기 표시/해제", self.toggle_favorite), ("이름·태그…", self.edit_meta), (None, None),
                          ("입력으로 사용", self.use_result_as_input), ("부분 수정…", self.retouch_result),
-                         ("파트 사면도…", self.part_views_result), ("화풍 추출…", self.extract_style_result),
+                         ("파트 사면도…", self.part_views_result),
+                         ("헤드와 겹쳐 보기…", self.overlay_with_head), ("화풍 추출…", self.extract_style_result),
                          (None, None), ("에셋 등록…", self.register_asset), ("잘라서 에셋 등록…", self.crop_asset),
                          (None, None), ("삭제", self.delete_result)):
             if text is None:
@@ -879,8 +901,16 @@ class GenerateTab(QWidget):
         if self.result_id:
             self.part_views(self.result_id)
 
+    def _head_sheets(self, image_id):
+        """이 프로젝트의 헤드 사면도 결과 [(id, 이름)] 최신순 + 같은 원본에서 나온 최신 것(기본 선택)."""
+        root = self.ws.root_original_id(image_id)
+        rows = [r for r in self.ws.db.list_images(self.project_id, "output") if r["function"] == "part_views_head"]
+        items = [(r["id"], f"#{r['id']} {r['name'] or '헤드 사면도'} ({(r['created_at'] or '')[:16]})") for r in rows]
+        same = next((r["id"] for r in rows if self.ws.root_original_id(r["id"]) == root), None)
+        return items, same
+
     def part_views(self, image_id):
-        from .retouch_dialog import PartViewsDialog, build_part_views_prompt
+        from .retouch_dialog import SET_KEY, PartViewsDialog
         if not self._ensure_project():
             return
         row = self.ws.db.get_image(image_id)
@@ -890,30 +920,175 @@ class GenerateTab(QWidget):
         original = self.ws.db.get_image(root_id) if root_id and root_id != image_id else None
         original_path = self.ws.image_path(original) if original else None
         has_original = bool(original_path and original_path.exists())
+        sheets, default_head = self._head_sheets(image_id)
         dlg = PartViewsDialog(self.ws.image_path(row), has_original=has_original,
-                              state=self._part_states.get(image_id), parent=self)
+                              state=self._part_states.get(image_id), head_sheets=sheets, default_head=default_head,
+                              parent=self)
         accepted = dlg.exec()
         self._part_states[image_id] = dlg.state()
         if not accepted:
             return
+        use_ref = has_original and dlg.use_original.isChecked()
+        key = dlg.part_type.currentData()
         try:
-            part = dlg.isolated()
+            if key == SET_KEY:    # v0.6.0: 헤드 → (그 결과를 기준으로) 헤어
+                head_part, hair_part = dlg.isolated("head"), dlg.isolated("hair")
+            else:
+                part = dlg.isolated()
         except ValueError as e:
             QMessageBox.warning(self, "파트 사면도", str(e))
             return
-        key = dlg.part_type.currentData()
+        if key == SET_KEY:
+            hair_id = self.ws.save_part_input(self.project_id, hair_part, image_id, f"헤어 (가발) 파트 (#{image_id})")
+            self._pending_set = {"hair_part_id": hair_id, "from_image_id": image_id, "use_ref": use_ref,
+                                 "original_path": original_path}
+            if not self._start_part_job("part_views_head", head_part, image_id, use_ref, original_path,
+                                        extra={"set_step": 1, "set_total": 2}):
+                self.ws.delete_image(hair_id)
+                self._pending_set = None
+            return
+        self._start_part_job(key, part, image_id, use_ref, original_path, head_sheet_id=dlg.head_sheet_id())
+
+    def _start_part_job(self, key, part, from_image_id, use_ref, original_path, *, head_sheet_id=None,
+                        part_id=None, extra=None, ask=True) -> bool:
+        """잘라낸 파트(PIL 또는 이미 저장한 part_id) 하나로 파트 사면도 요청을 시작한다."""
+        from .retouch_dialog import build_part_views_prompt
         label = dict((k, l) for l, k in PART_TYPES)[key]
-        part_id = self.ws.save_part_input(self.project_id, part, image_id, f"{label} 파트 (#{image_id})")
-        use_ref = has_original and dlg.use_original.isChecked()
+        if part_id is None:
+            part_id = self.ws.save_part_input(self.project_id, part, from_image_id, f"{label} 파트 (#{from_image_id})")
+        head_path = None
+        if head_sheet_id:
+            hr = self.ws.db.get_image(head_sheet_id)
+            head_path = self.ws.image_path(hr) if hr else None
+            if not (head_path and head_path.exists()):
+                head_path, head_sheet_id = None, None
         template, preset_name = self.ws.resolve_prompt(key, None)
-        prompt = self.apply_style(build_part_views_prompt(template, use_ref))
-        inputs = [self.ws.image_path(self.ws.db.get_image(part_id))] + ([original_path] if use_ref else [])
+        prompt = self.apply_style(build_part_views_prompt(template, use_ref, head_sheet=bool(head_path)))
+        inputs = [self.ws.image_path(self.ws.db.get_image(part_id))] + ([head_path] if head_path else []) + \
+            ([original_path] if use_ref else [])
+        params = {"part_type": key, "from_image_id": from_image_id, "used_original_reference": use_ref}
+        if head_sheet_id:
+            params["head_sheet_id"] = head_sheet_id
+        params.update(extra or {})
         job = GenJob(project_id=self.project_id, function=key, prompt=prompt, preset_id=None,
                      preset_name=preset_name, input_paths=inputs, source_image_id=part_id,
-                     extra_params={"part_type": key, "from_image_id": image_id, "used_original_reference": use_ref},
-                     **self.current_options())
-        if not self.ctl.start(job, self):
+                     extra_params=params, **self.current_options())
+        if not self.ctl.start(job, self, ask=ask):
             self.ws.delete_image(part_id)  # 요청하지 않았으면 잘라낸 입력을 남기지 않는다
+            return False
+        return True
+
+    def _continue_set_later(self, head_id, job, tries=0):
+        """완료 신호 직후에는 생성 워커가 아직 정리 전이라, 비워질 때까지 잠깐 기다렸다 보낸다."""
+        from PySide6.QtCore import QTimer
+        if self.ctl.is_busy() and tries < 200:
+            QTimer.singleShot(25, lambda: self._continue_set_later(head_id, job, tries + 1))
+            return
+        if not self._continue_set(head_id, job):
+            self.progress_label.setText('세트: 헤어 사면도를 보내지 않았습니다.')
+
+    def _continue_set(self, head_id, job) -> bool:
+        """세트 1/2(헤드)가 끝나면 그 결과를 기준으로 헤어를 이어서 보낸다."""
+        pend, self._pending_set = self._pending_set, None
+        if not pend or job.project_id != self.project_id:
+            if pend:
+                self.ws.delete_image(pend["hair_part_id"])
+            return False
+        ok = self._start_part_job("part_views_hair", None, pend["from_image_id"], pend["use_ref"],
+                                  pend["original_path"], head_sheet_id=head_id, part_id=pend["hair_part_id"],
+                                  extra={"set_step": 2, "set_total": 2}, ask=False)
+        if ok:
+            self.progress_label.setText("세트 2/2 — 헤어 사면도 생성 중 (헤드에 크기 맞춤)")
+        return ok
+
+    def overlay_with_head(self):
+        """v0.6.0 정렬 가이드: 헤어 사면도 결과를 기준 헤드 사면도와 겹쳐 본다."""
+        import json
+        from .retouch_dialog import OverlayDialog
+        row = self.ws.db.get_image(self.result_id) if self.result_id else None
+        params = json.loads(row["params_json"]) if row and row["params_json"] else {}
+        head = self.ws.db.get_image(params.get("head_sheet_id")) if params.get("head_sheet_id") else None
+        if not head or not self.ws.image_path(head).exists():
+            QMessageBox.information(self, "헤드와 겹쳐 보기", "이 결과는 헤드 사면도를 기준으로 만든 헤어 사면도가 아닙니다.\n"
+                                    "[파트 사면도…]에서 '헤드+헤어 세트'로 만들거나, 헤어를 돌릴 때 기준 헤드를 고르세요.")
+            return
+        OverlayDialog(self.ws.image_path(head), self.ws.image_path(row), parent=self).exec()
+
+    # ---- 핀터레스트 (v0.6.0) ---------------------------------------------
+    def _estimate_steps(self, steps) -> float | None:
+        o = self.current_options()
+        total = 0.0
+        for f in steps:
+            try:
+                est = self.ws.catalog.estimate(o["model"], o["quality"], o["size"], self.ws.default_prompt(f), 1, self.ws.db)
+                v = est.for_budget()
+            except Exception:
+                v = None
+            if v is None:
+                return None
+            total += v
+        return total
+
+    def open_pinterest(self):
+        from .pinterest_ui import PinterestDialog
+        dlg = PinterestDialog(self.ws, self.project_id, estimate_fn=self._estimate_steps, parent=self)
+        if not dlg.exec() or not dlg.imported_ids:
+            return
+        self.reload_projects(dlg.project_id)
+        self.set_input(dlg.imported_ids[0])
+        if dlg.steps:
+            self.run_batch(dlg.imported_ids, dlg.steps)
+        else:
+            QMessageBox.information(self, "핀터레스트", f"{len(dlg.imported_ids)}장을 원본으로 가져왔습니다 ('외부 출처' 태그).")
+
+    def run_batch(self, image_ids, steps) -> bool:
+        """여러 원본에 같은 단계를 순서대로 (앞 단계 결과 → 다음 입력). 시작 전에 장수·예상 비용을 한 번 확인."""
+        if self.ctl.is_busy() or self._batch:
+            QMessageBox.information(self, "생성 중", "이미 진행 중인 요청이 있습니다. 끝난 뒤 다시 시도하세요.")
+            return False
+        total = len(image_ids) * len(steps)
+        if not self.ws.demo_mode:
+            per = self._estimate_steps(steps)
+            cost = f"예상 약 ${per * len(image_ids):.2f}" if per is not None else "예상 비용 계산 불가"
+            names = " → ".join(label_of(f) for f in steps)
+            if QMessageBox.question(self, "일괄 생성 확인 (유료)",
+                                    f"{len(image_ids)}장 × [{names}] = 총 {total}장을 OpenAI 로 보냅니다.\n{cost}\n\n"
+                                    "한 장씩 차례로 보내고, 실패하면 거기서 멈춥니다 (자동 재시도 없음).") \
+                    != QMessageBox.StandardButton.Yes:
+                return False
+        self._batch = {"items": [(iid, list(steps)) for iid in image_ids], "done": 0, "total": total, "cur": None}
+        self._batch_next(None)
+        return True
+
+    def _batch_next(self, last_id, tries=0):
+        """완료 직후에는 워커 정리 전이라 비워질 때까지 기다렸다 다음 단계를 보낸다."""
+        b = self._batch
+        if not b:
+            return
+        if self.ctl.is_busy() and tries < 200:
+            QTimer.singleShot(25, lambda: self._batch_next(last_id, tries + 1))
+            return
+        if last_id is not None:
+            b["done"] += 1
+            b["cur"] = last_id
+        while b["items"] and not b["items"][0][1]:
+            b["items"].pop(0)
+            b["cur"] = None
+        if not b["items"]:
+            self._batch = None
+            self.progress_label.setText(f"일괄 생성 완료 ({b['done']}/{b['total']}장)")
+            return
+        iid, steps = b["items"][0]
+        f = steps.pop(0)
+        src = self.ws.db.get_image(b["cur"] or iid)
+        prompt = self.apply_style(self.ws.default_prompt(f))
+        job = GenJob(project_id=src["project_id"], function=f, prompt=prompt, preset_id=None, preset_name="기본",
+                     input_paths=[self.ws.image_path(src)], source_image_id=src["id"],
+                     extra_params={"batch": f"{b['done'] + 1}/{b['total']}"}, **self.current_options())
+        if not self.ctl.start(job, self, ask=False):
+            self._batch = None
+            return
+        self.progress_label.setText(f"일괄 생성 {b['done'] + 1}/{b['total']} — [{label_of(f)}]")
 
     def open_billing_page(self):
         QDesktopServices.openUrl(QUrl("https://platform.openai.com/settings/organization/billing/overview"))

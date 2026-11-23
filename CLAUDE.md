@@ -3,7 +3,7 @@
 이 파일은 Claude Code 가 이 저장소에서 작업을 시작할 때 자동으로 읽습니다. 이전 작업(claude.ai 대화, 2026-11-11 ~ 11-16)에서
 결정된 것, 지켜야 할 규칙, 함정을 정리했습니다. **작업 전에 끝까지 읽으세요.**
 
-현재 버전: **PC v0.5.0 / 웹 v0.3.0** (2026-11-15 릴리스) · 저장소: `grafficcioso/V-Concept-Studio` (공개)
+현재 버전: **PC v0.6.0 / 웹 v0.4.0** (2026-11-25 릴리스) · 저장소: `grafficcioso/V-Concept-Studio` (공개)
 
 ---
 
@@ -83,8 +83,10 @@ crs.spec                PyInstaller onedir: VConceptStudio.exe(창) + VConceptSt
 ```bash
 pip install -r requirements-dev.txt          # Windows: python -m pip ...
 python main.py                               # PC 앱 실행 (run_dev.bat)
-QT_QPA_PLATFORM=offscreen python -m pytest tests -q        # PC 테스트 (현재 71개)
-python tools/build_web.py _site && python -m pytest tests_web -q   # 웹 테스트 (현재 7개, Chrome 필요)
+QT_QPA_PLATFORM=offscreen python -m pytest tests -q        # PC 테스트 (현재 79개)
+python tools/build_web.py _site && python -m pytest tests_web -q   # 웹 테스트 (현재 9개, Chrome 필요)
+# uv 로 돌릴 때: uv run --with-requirements requirements-dev.txt --with playwright python -m pytest ...
+#   (pytest-playwright 플러그인은 넣지 말 것 — 자체 page 픽스처·이벤트 루프와 충돌)
 ```
 
 - 테스트는 **네트워크·실제 API·실제 키 저장소를 쓰지 않습니다.** `tests/conftest.py` 의 autouse 픽스처가
@@ -155,6 +157,24 @@ python tools/build_web.py _site && python -m pytest tests_web -q   # 웹 테스�
 - 사용자 사용법: 설정 → Claude 연결 → 허용 → 등록 명령 복사(`claude mcp add --scope user v-concept -- "...VConceptStudio-mcp.exe"`),
   밖에서는 PC 에서 `claude remote-control` + 폰 Claude 앱 Code 탭.
 
+### 파트 사면도 · 헤드+헤어 세트 (v0.6.0)
+- 입력 순서: 1) 잘라낸 파트 2) (헤드 사면도) 3) (원본 원화). `build_part_views_prompt` / 웹 `partPrompt` 가 "SECOND/THIRD image" 안내를 이 순서에 맞춘다.
+  사용자가 `{reference_instruction}` 을 지운 프롬프트에도 안내는 Positive 끝에 붙인다. **기본 프롬프트 파일은 바꾸지 않았다.**
+- 세트: `PartViewsDialog` 가 헤드/헤어 레이어를 따로 가짐(다른 쪽은 `ghost` 파랑). 헤드 요청이 끝나면 `_continue_set_later`
+  (컨트롤러 워커 정리를 기다림) → 헤어 요청을 `ctl.start(..., ask=False)` 로 보냄 (예산 초과일 때만 확인 창). 헤드 실패 시 헤어 파트 입력 삭제.
+- 결과 params 에 `head_sheet_id`, `set_step` → [헤드와 겹쳐 보기](`OverlayDialog`, 웹 `#overlay`).
+- 웹은 잘라낸 파트를 IndexedDB `kind:"part_input"` 으로 저장 (기록·동기화에 안 나옴).
+
+### 핀터레스트 (v0.6.0, `crs/pinterest.py`, `crs/ui/pinterest_ui.py`)
+- 공개 보드 RSS(`/<user>/<board>.rss`, 사용자만 있으면 `feed.rss`) — 최근 약 25개, 로그인·키·비용 없음. 비공식이라 언제든 막힐 수 있음.
+  2026-11-24 확인: RSS 200 응답, `/originals/` 원본 크기 받기 됨(실패 시 `/736x/`).
+- pubDate 는 핀 날짜로 보임 — '보드에 추가한 날짜'인지는 **확인 못 함**.
+- 가져온 핀: 원본 + 태그 `외부 출처, pinterest` + 메모(출처·공부용·판매/커미션/게시 금지). `pinterest_pins` 표로 중복 방지.
+- 창: 네트워크는 QThread. 가져온 뒤 단계 생성은 생성 탭 `run_batch`(시작 전 한 번 확인, 실패 시 멈춤, 자동 재시도 없음).
+- MCP: `pinterest_list`, `pinterest_import`(confirm 없으면 미리보기만 → 사용자 OK 후 confirm=true, 생성은 tool_generate 의 장수·하루 상한 그대로).
+  테스트는 `Server.pinterest_get` 에 가짜 네트워크.
+- 디렉터 결정(2026-11-25): 핀은 정면화·사면도 변환까지 허용, 단 '외부 출처' = 공부·참고용.
+
 ### 웹앱 (`web/`)
 - 빌드 도구 없음(순수 ES 모듈). IndexedDB `vconcept` v2 (images, usage, tombstones). 서비스 워커 캐시 이름은 빌드 때 바뀜.
 - OpenAI 는 브라우저에서 직접 호출(CORS 허용 확인됨). API 키는 그 기기의 localStorage 에만.
@@ -176,11 +196,10 @@ python tools/build_web.py _site && python -m pytest tests_web -q   # 웹 테스�
 ## 7. 대기 목록
 
 사용자가 "해"라고 하면 한꺼번에 작업합니다. 새 요청은 여기 추가하고 사용자에게 목록을 보여 주세요.
+(VStudio 쪽 대기 목록: `../Handoff/update_waitlist.md` — 둘 다 맞춰 둘 것)
 
-1. **Pinterest 공개 보드 감시** — 설정에 보드 주소를 넣으면 PC 프로그램이 주기적으로(예: 10분) `보드주소.rss` 를 읽어
-   새 핀 이미지를 원본 해상도로 받아 '받은 원본'(inbox)에 추가. 옵션: 받기만 / 정해 둔 단계 자동 생성(장수·금액 상한 필수).
-   제약을 사용자에게 이미 설명함: 공개 보드만, RSS 는 최근 ~20개·불안정할 수 있음, 미리보기 주소를 원본 크기로 바꾸는 방법은 확인 필요,
-   저작권은 사용자 판단. 비밀 보드는 공식 API(앱 승인) 필요해서 제외.
+- (비어 있음 — v0.6.0 에서 폰 파트 사면도·헤드/헤어 크기 맞추기·핀터레스트 가져오기 완료)
+- 참고: 핀터레스트 '주기적 자동 감시'는 만들지 않았다 (지금은 [핀 불러오기]·MCP 로 사람이 시킬 때만). 필요하면 대기 목록에 추가.
 
 보류(사용자가 "다음에"라고 함):
 - **Winamp 스킨 같은 UI** (보라색 고양이 모양 Y2K 기기 풍). 사용자가 스킨 이미지를 준비하면 시작.

@@ -46,6 +46,7 @@ class PaintCanvas(QWidget):
             self._blank()
         self.brush = max(8, min(base.width(), base.height()) // 25)
         self.eraser = False
+        self.ghost: QImage | None = None   # v0.6.0: 세트 모드의 다른 파트 (파란색, 칠해지지 않음)
         self.undo_stack: list[QImage] = []
         self._last: QPointF | None = None
         self._hover: QPointF | None = None
@@ -135,6 +136,8 @@ class PaintCanvas(QWidget):
         p.fillRect(t, checker_brush())
         p.drawImage(t, self.base)
         p.setOpacity(DISPLAY_OPACITY)
+        if self.ghost is not None:
+            p.drawImage(t, self.ghost)
         p.drawImage(t, self.overlay)
         p.setOpacity(1.0)
         if self._hover is not None:
@@ -274,8 +277,17 @@ REFERENCE_ORIGINAL = ("The SECOND image is the original source illustration of t
                       "reference for the character's original look, art style, linework, colors, and hair shapes.")
 
 
-PART_REFERENCE = ("The SECOND image is the original full character illustration, given only as a reference for scale, "
+ORDINALS = {2: "SECOND", 3: "THIRD"}
+PART_REFERENCE = ("The {n} image is the original full character illustration, given only as a reference for scale, "
                   "proportions, and art style. Do not draw any other part from it.")
+# v0.6.0: 헤어 사면도를 먼저 만든 민머리 헤드 사면도에 맞춘다 (크기·눈선·턱선)
+HEAD_SHEET_REFERENCE = (
+    "The SECOND image is the four-view sheet of the bald head that this wig must fit. Use exactly the same view order, "
+    "panel layout, panel positions, and head scale as that sheet, so each wig view can be laid directly over the "
+    "matching head view: match the head width, skull height and shape, hairline, ear position, eye line, and jaw/chin "
+    "line. Do not draw the face, skin, or head itself; draw only the wig where it would sit on that head.")
+SET_KEY = "set_head_hair"   # 파트 종류 콤보의 '헤드+헤어 세트' 값
+GHOST_COLOR = QColor(40, 110, 255)
 
 
 def build_retouch_prompt(template: str, request: str, has_markup: bool, has_reference: bool) -> str:
@@ -289,24 +301,56 @@ def build_retouch_prompt(template: str, request: str, has_markup: bool, has_refe
                              request=request.strip())
 
 
-def build_part_views_prompt(template: str, has_reference: bool) -> str:
-    from ..functions import fill_placeholders
-    return fill_placeholders(template, reference_instruction=PART_REFERENCE if has_reference else "")
+def build_part_views_prompt(template: str, has_reference: bool, head_sheet: bool = False) -> str:
+    """입력 순서: 1) 잘라낸 파트 2) (헤드 사면도) 3) (원본 원화). 안내 문장의 '몇 번째 이미지'를 거기에 맞춘다."""
+    from ..functions import fill_placeholders, join_prompt, split_prompt
+    parts = []
+    if head_sheet:
+        parts.append(HEAD_SHEET_REFERENCE)
+    if has_reference:
+        parts.append(PART_REFERENCE.replace("{n}", ORDINALS[3 if head_sheet else 2]))
+    ref = " ".join(parts)
+    if ref and "{reference_instruction}" not in (template or ""):
+        pos, neg = split_prompt(template)   # 사용자가 자리표시자를 지운 프롬프트에도 안내는 붙인다
+        template = join_prompt(pos + "\n\n{reference_instruction}", neg)
+    return fill_placeholders(template, reference_instruction=ref)
+
+
+def tint_overlay(overlay: QImage, color: QColor = GHOST_COLOR) -> QImage:
+    """칠한 레이어를 다른 색으로 바꾼 사본 (세트 모드에서 지금 안 칠하는 파트를 보여 주는 용도)."""
+    out = QImage(overlay.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.drawImage(0, 0, overlay)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    p.fillRect(out.rect(), color)
+    p.end()
+    return out
 
 
 class PartViewsDialog(QDialog):
-    """파트 사면도: 돌릴 파트를 빨간 펜으로 칠하고 파트 종류를 고른다."""
+    """파트 사면도: 돌릴 파트를 빨간 펜으로 칠하고 파트 종류를 고른다.
 
-    def __init__(self, image_path, *, has_original: bool, state: dict | None = None, parent=None):
-        from PySide6.QtWidgets import QComboBox
+    v0.6.0: '헤드+헤어 세트' = 헤드(빨강)·헤어(파랑)를 따로 칠해 두 장을 이어서 생성.
+            헤어 하나만 돌릴 때도 이미 만든 헤드 사면도를 크기 기준으로 함께 보낼 수 있다.
+    head_sheets: [(image_id, 표시 이름)] 최신순, default_head: 기본으로 고를 헤드 사면도 id
+    """
+
+    def __init__(self, image_path, *, has_original: bool, state: dict | None = None, head_sheets=None,
+                 default_head: int | None = None, parent=None):
+        from PySide6.QtWidgets import QButtonGroup, QComboBox, QRadioButton
         from ..functions import PART_TYPES
         super().__init__(parent)
         self.setWindowTitle("파트 사면도 — 돌릴 파트를 칠하세요")
-        self.resize(1280, 820)
+        self.resize(1280, 860)
         with Image.open(image_path) as im:
             self.base_pil = ImageOps.exif_transpose(im).convert("RGBA")
         state = state or {}
         self.canvas = PaintCanvas(pil_to_qimage(self.base_pil), state.get("overlay"))
+        layers = state.get("layers") or {}
+        self.layers = {k: (layers[k].copy() if layers.get(k) is not None and layers[k].size() == self.canvas.base.size()
+                           else self.canvas._blank()) for k in ("head", "hair")}
+        self.cur_layer = None
         side = QVBoxLayout()
         box = QGroupBox("펜")
         g = QGridLayout(box)
@@ -336,21 +380,47 @@ class PartViewsDialog(QDialog):
         self.part_type = QComboBox()
         for label, key in PART_TYPES:
             self.part_type.addItem(label, key)
+        self.part_type.addItem("헤드+헤어 세트 (2장, 크기 맞춤)", SET_KEY)
         idx = self.part_type.findData(state.get("part_type"))
         self.part_type.setCurrentIndex(max(0, idx))
         v.addWidget(self.part_type)
+        # 세트 모드: 지금 칠하는 파트
+        self.layer_box = QWidget()
+        h = QHBoxLayout(self.layer_box)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(QLabel("칠하는 파트:"))
+        self.layer_head = QRadioButton("헤드")
+        self.layer_hair = QRadioButton("헤어")
+        self._layer_group = QButtonGroup(self)
+        for rb in (self.layer_head, self.layer_hair):
+            self._layer_group.addButton(rb)
+            h.addWidget(rb)
+        self.layer_head.setChecked(True)
+        self.layer_head.toggled.connect(lambda on: self._switch_layer("head" if on else "hair"))
+        v.addWidget(self.layer_box)
+        # 헤어 단독: 크기 기준 헤드 사면도
+        self.head_box = QWidget()
+        hv = QVBoxLayout(self.head_box)
+        hv.setContentsMargins(0, 0, 0, 0)
+        hv.addWidget(QLabel("크기 기준 헤드 사면도 (이 헤드에 맞춰 헤어를 그림):"))
+        self.head_sheet = QComboBox()
+        self.head_sheet.addItem("(쓰지 않음)", None)
+        for iid, label in head_sheets or []:
+            self.head_sheet.addItem(label, iid)
+        want = state.get("head_sheet", default_head)
+        i = self.head_sheet.findData(want) if want else -1
+        self.head_sheet.setCurrentIndex(max(0, i))
+        hv.addWidget(self.head_sheet)
+        v.addWidget(self.head_box)
         side.addWidget(box)
         self.use_original = QCheckBox("원본 원화를 참조로 함께 보내기 (크기·형태·화풍 맞추기용)")
         self.use_original.setChecked(state.get("use_original", True) and has_original)
         self.use_original.setEnabled(has_original)
         side.addWidget(self.use_original)
-        info = QLabel("· 돌릴 파트 하나를 넉넉하게 감싸도록 칠하세요. 칠한 부분만 잘라내고 나머지는 흰색으로 지운 뒤 보냅니다.\n"
-                      "· 다른 파트가 함께 칠해지면 같이 돌아갈 수 있습니다.\n"
-                      "· 4개 뷰의 일관성은 완벽하게 보장되지 않습니다.\n"
-                      "· 유료 생성 요청 1회입니다. 모델·품질·크기는 생성 화면 설정을 따릅니다.")
-        info.setWordWrap(True)
-        info.setStyleSheet("color: #555;")
-        side.addWidget(info)
+        self.info = QLabel()
+        self.info.setWordWrap(True)
+        self.info.setStyleSheet("color: #555;")
+        side.addWidget(self.info)
         self.preview = QLabel("칠한 뒤 [잘라낸 모습 미리보기]를 누르면 보낼 이미지를 확인할 수 있습니다.")
         self.preview.setWordWrap(True)
         self.preview.setMinimumHeight(200)
@@ -361,46 +431,172 @@ class PartViewsDialog(QDialog):
         side.addWidget(b)
         side.addWidget(self.preview, 1)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("사면도 생성 (유료)")
+        self.ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("닫기 (칠한 내용 유지)")
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
         side.addWidget(buttons)
         panel = QWidget()
         panel.setLayout(side)
-        panel.setFixedWidth(380)
+        panel.setFixedWidth(400)
         lay = QHBoxLayout(self)
         lay.addWidget(self.canvas, 1)
         lay.addWidget(panel)
+        self.part_type.currentIndexChanged.connect(self._on_type)
+        if state.get("part_type") == SET_KEY:   # 세트 상태 복원
+            self.cur_layer = "head"
+            self._apply_layer()
+            if state.get("layer") == "hair":
+                self.layer_hair.setChecked(True)
+        self._on_type()
+
+    # ---- 모드 ------------------------------------------------------------
+    def is_set(self) -> bool:
+        return self.part_type.currentData() == SET_KEY
+
+    def _on_type(self, *_):
+        is_set = self.is_set()
+        if is_set and self.cur_layer is None:            # 일반 → 세트: 지금 칠한 것은 헤드 레이어로
+            self.layers["head"] = self.canvas.overlay
+            self.cur_layer = "head"
+            self.layer_head.blockSignals(True)
+            self.layer_head.setChecked(True)
+            self.layer_head.blockSignals(False)
+            self._apply_layer()
+        elif not is_set and self.cur_layer is not None:  # 세트 → 일반: 지금 칠하던 레이어를 그대로 씀
+            self.layers[self.cur_layer] = self.canvas.overlay
+            self.cur_layer = None
+            self.canvas.ghost = None
+            self.canvas.update()
+        self.layer_box.setVisible(is_set)
+        self.head_box.setVisible(self.part_type.currentData() == "part_views_hair" and self.head_sheet.count() > 1)
+        self.ok_btn.setText("세트 생성 (유료 2장)" if is_set else "사면도 생성 (유료)")
+        if is_set:
+            lines = ["· [헤드]를 고르고 민머리를 칠한 뒤, [헤어]를 고르고 가발을 칠하세요. 지금 칠하는 파트는 빨강, 다른 파트는 파랑으로 보입니다.",
+                     "· 헤드 사면도를 먼저 만들고, 그 결과를 크기 기준으로 넣어 헤어 사면도를 이어서 만듭니다 "
+                     "(머리 크기·눈선·턱선 맞춤).",
+                     "· 유료 생성 2회입니다. 헤드가 실패하면 헤어는 보내지 않습니다.",
+                     "· AI가 크기를 완벽히 맞춘다는 보장은 없습니다. 결과에서 [헤드와 겹쳐 보기]로 확인하세요."]
+        else:
+            lines = ["· 돌릴 파트 하나를 넉넉하게 감싸도록 칠하세요. 칠한 부분만 잘라내고 나머지는 흰색으로 지운 뒤 보냅니다.",
+                     "· 다른 파트가 함께 칠해지면 같이 돌아갈 수 있습니다.",
+                     "· 4개 뷰의 일관성은 완벽하게 보장되지 않습니다.",
+                     "· 유료 생성 요청 1회입니다. 모델·품질·크기는 생성 화면 설정을 따릅니다."]
+        self.info.setText("\n".join(lines))
+
+    def _switch_layer(self, name):
+        if self.cur_layer is None or name == self.cur_layer:
+            return
+        self.layers[self.cur_layer] = self.canvas.overlay
+        self.cur_layer = name
+        self.canvas.undo_stack.clear()
+        self._apply_layer()
+
+    def _apply_layer(self):
+        other = "hair" if self.cur_layer == "head" else "head"
+        self.canvas.overlay = self.layers[self.cur_layer]
+        self.canvas.ghost = tint_overlay(self.layers[other])
+        self.canvas.update()
+
+    def _layer_image(self, name) -> QImage:
+        return self.canvas.overlay if self.cur_layer == name else self.layers[name]
 
     def _on_size(self, value):
         self.canvas.brush = value
         self.size_label.setText(f"{value}px")
         self.canvas.update()
 
-    def isolated(self) -> Image.Image:
+    # ---- 결과 ------------------------------------------------------------
+    def isolated(self, layer: str | None = None) -> Image.Image:
         from ..workspace import isolate_part
-        painted = qimage_to_pil(self.canvas.overlay).convert("RGBA")
-        return isolate_part(self.base_pil, painted)
+        img = self._layer_image(layer) if layer else self.canvas.overlay
+        return isolate_part(self.base_pil, qimage_to_pil(img).convert("RGBA"))
+
+    def head_sheet_id(self) -> int | None:
+        if self.part_type.currentData() != "part_views_hair":
+            return None
+        return self.head_sheet.currentData()
 
     def show_preview(self):
         from PySide6.QtGui import QPixmap
         try:
-            img = self.isolated()
+            img = self.isolated(self.cur_layer)
         except ValueError as e:
             self.preview.setText(str(e))
             return
         pm = QPixmap.fromImage(pil_to_qimage(img))
-        self.preview.setPixmap(pm.scaled(340, 260, Qt.AspectRatioMode.KeepAspectRatio,
+        self.preview.setPixmap(pm.scaled(360, 260, Qt.AspectRatioMode.KeepAspectRatio,
                                          Qt.TransformationMode.SmoothTransformation))
 
+    @staticmethod
+    def _has(img: QImage) -> bool:
+        return qimage_to_pil(img).getchannel("A").getbbox() is not None
+
     def _accept(self):
-        if not self.canvas.has_marks():
-            from PySide6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
+        if self.is_set():
+            missing = [n for k, n in (("head", "헤드"), ("hair", "헤어")) if not self._has(self._layer_image(k))]
+            if missing:
+                QMessageBox.information(self, "파트 사면도", f"{'·'.join(missing)} 파트를 칠해 주세요. "
+                                        "(칠하는 파트를 바꿔 가며 둘 다 칠해야 합니다)")
+                return
+        elif not self.canvas.has_marks():
             QMessageBox.information(self, "파트 사면도", "돌릴 파트를 빨간 펜으로 칠해 주세요.")
             return
         self.accept()
 
     def state(self) -> dict:
         return {"overlay": self.canvas.overlay.copy(), "part_type": self.part_type.currentData(),
-                "use_original": self.use_original.isChecked()}
+                "use_original": self.use_original.isChecked(),
+                "layers": {k: self._layer_image(k).copy() for k in ("head", "hair")}, "layer": self.cur_layer,
+                "head_sheet": self.head_sheet.currentData()}
+
+
+class OverlayDialog(QDialog):
+    """v0.6.0 정렬 가이드: 헤어 사면도를 헤드 사면도 위에 반투명으로 겹쳐 본다 (폭을 맞춤)."""
+
+    def __init__(self, below_path, above_path, title="헤드와 겹쳐 보기", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(1100, 760)
+        with Image.open(below_path) as a, Image.open(above_path) as b:
+            self.below = a.convert("RGBA")
+            above = b.convert("RGBA")
+        if above.size != self.below.size:
+            k = self.below.width / above.width
+            above = above.resize((self.below.width, max(1, round(above.height * k))), Image.LANCZOS)
+            canvas = Image.new("RGBA", self.below.size, (255, 255, 255, 255))
+            canvas.paste(above, (0, 0))
+            above = canvas
+        self.above = above
+        self.view = QLabel()
+        self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.view.setMinimumSize(600, 400)
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, 100)
+        self.slider.setValue(50)
+        self.slider.valueChanged.connect(self.render_view)
+        self.label = QLabel()
+        row = QHBoxLayout()
+        row.addWidget(QLabel("헤드"))
+        row.addWidget(self.slider, 1)
+        row.addWidget(QLabel("헤어"))
+        row.addWidget(self.label)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.view, 1)
+        lay.addLayout(row)
+        tip = QLabel("슬라이더로 비율을 바꿔 머리 크기·눈선·턱선이 맞는지 보세요. 두 장의 크기가 다르면 폭을 맞춰 겹칩니다.")
+        tip.setStyleSheet("color: #555;")
+        lay.addWidget(tip)
+        self.render_view()
+
+    def composite(self) -> Image.Image:
+        return Image.blend(self.below, self.above, self.slider.value() / 100.0)
+
+    def render_view(self, *_):
+        from PySide6.QtGui import QPixmap
+        self.label.setText(f"{self.slider.value()}%")
+        pm = QPixmap.fromImage(pil_to_qimage(self.composite()))
+        w, h = max(600, self.view.width()), max(400, self.view.height())
+        self.view.setPixmap(pm.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio,
+                                      Qt.TransformationMode.SmoothTransformation))

@@ -78,6 +78,7 @@ textarea { resize: vertical; }
 .sheet-head { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--card); font-weight: 700; }
 .sheet-body { overflow: auto; padding: 10px 12px calc(20px + var(--safe-b)); max-width: 760px; width: 100%; margin: 0 auto; }
 .canvas-wrap { background: var(--checker); border-radius: 12px; overflow: hidden; touch-action: none; }
+.canvas-wrap canvas { display: block; width: 100%; height: auto; touch-action: none; }  /* v0.4.0: 파트 사면도·겹쳐 보기도 같이 */
 #rtCanvas { display: block; width: 100%; height: auto; touch-action: none; }
 .toast { position: fixed; left: 50%; bottom: calc(90px + var(--safe-b)); transform: translateX(-50%); z-index: 40;
   background: rgba(30,25,40,.92); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; max-width: 90vw; }
