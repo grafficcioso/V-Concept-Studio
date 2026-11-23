@@ -3,7 +3,7 @@
 이 파일은 Claude Code 가 이 저장소에서 작업을 시작할 때 자동으로 읽습니다. 이전 작업(claude.ai 대화, 2026-11-11 ~ 11-16)에서
 결정된 것, 지켜야 할 규칙, 함정을 정리했습니다. **작업 전에 끝까지 읽으세요.**
 
-현재 버전: **PC v0.6.0 / 웹 v0.4.0** (2026-11-25 릴리스) · 저장소: `grafficcioso/V-Concept-Studio` (공개)
+현재 버전: **PC v0.6.0 / 웹 v0.4.0** (2026-11-24 릴리스) · 저장소: `grafficcioso/V-Concept-Studio` (공개)
 
 ---
 
@@ -173,7 +173,7 @@ python tools/build_web.py _site && python -m pytest tests_web -q   # 웹 테스�
 - 창: 네트워크는 QThread. 가져온 뒤 단계 생성은 생성 탭 `run_batch`(시작 전 한 번 확인, 실패 시 멈춤, 자동 재시도 없음).
 - MCP: `pinterest_list`, `pinterest_import`(confirm 없으면 미리보기만 → 사용자 OK 후 confirm=true, 생성은 tool_generate 의 장수·하루 상한 그대로).
   테스트는 `Server.pinterest_get` 에 가짜 네트워크.
-- 디렉터 결정(2026-11-25): 핀은 정면화·사면도 변환까지 허용, 단 '외부 출처' = 공부·참고용.
+- 디렉터 결정(2026-11-24): 핀은 정면화·사면도 변환까지 허용, 단 '외부 출처' = 공부·참고용.
 
 ### 웹앱 (`web/`)
 - 빌드 도구 없음(순수 ES 모듈). IndexedDB `vconcept` v2 (images, usage, tombstones). 서비스 워커 캐시 이름은 빌드 때 바뀜.
